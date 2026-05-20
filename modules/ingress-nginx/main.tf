@@ -10,14 +10,17 @@ resource "helm_release" "ingress_nginx" {
   repository = "https://kubernetes.github.io/ingress-nginx"
   chart      = "ingress-nginx"
   version    = "4.13.3"
+  values = concat([
+    yamlencode({
+      controller = {
+        service = {
+          type = "LoadBalancer"
+        }
 
-  set {
-    name  = "controller.service.type"
-    value = "LoadBalancer"
-  }
-
-  set {
-    name  = "controller.publishService.enabled"
-    value = "true"
-  }
+        publishService = {
+          enabled = true
+        }
+      }
+    })
+  ], var.values)
 }
