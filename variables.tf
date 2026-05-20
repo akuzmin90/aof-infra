@@ -17,14 +17,26 @@ variable "selectel_password" {
   nullable    = false
 }
 
-variable "selectel_auth_region" {
-  description = "Selectel authentication region."
+variable "selectel_project_id" {
+  description = "Selectel project ID where Container Registry will be created."
   type        = string
-  default     = "pool"
+  nullable    = false
 }
 
-variable "selectel_auth_url" {
-  description = "Selectel Keystone Identity authentication URL."
+variable "registry_name" {
+  description = "Selectel Container Registry name. Use lowercase letters, digits, and hyphens; max 20 characters."
   type        = string
-  default     = "https://cloud.api.selcloud.ru/identity/v3/"
+  default     = "aof-registry"
+
+  validation {
+    condition     = can(regex("^[a-z][a-z0-9-]{0,18}[a-z0-9]$", var.registry_name))
+    error_message = "registry_name must start with a lowercase letter, end with a lowercase letter or digit, contain only lowercase letters, digits, and hyphens, and be 2-20 characters long."
+  }
+}
+
+variable "jenkins_admin_password" {
+  description = "Initial Jenkins admin password when Jenkins is enabled."
+  type        = string
+  sensitive   = true
+  default     = null
 }

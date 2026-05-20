@@ -1,4 +1,5 @@
 .terraform/
+.kube/
 *.tfstate
 *.tfstate.*
 crash.log
