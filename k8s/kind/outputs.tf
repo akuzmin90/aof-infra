@@ -14,7 +14,38 @@ output "local_minio_endpoint" {
   value       = "http://minio.minio.svc.cluster.local:9000"
 }
 
+output "local_minio_console_url" {
+  description = "Local MinIO console URL served through ingress."
+  value       = "https://s3.hitmakers.ru"
+}
+
 output "local_frontend_bucket" {
   description = "Local MinIO bucket used for frontend assets."
   value       = module.minio.bucket_name
+}
+
+output "postgres_jdbc_url" {
+  description = "JDBC URL for aof-back inside the local Kubernetes cluster."
+  value       = module.postgresql_cluster.jdbc_url
+}
+
+output "postgres_username" {
+  description = "PostgreSQL application username."
+  value       = module.postgresql_cluster.username
+}
+
+output "postgres_password" {
+  description = "Generated PostgreSQL application password."
+  value       = random_password.postgres_app.result
+  sensitive   = true
+}
+
+output "postgres_dump_bucket" {
+  description = "Local MinIO bucket used for manual logical PostgreSQL dumps."
+  value       = module.postgresql_cluster.dump_bucket
+}
+
+output "postgres_backup_bucket" {
+  description = "Local MinIO bucket used for CloudNativePG physical backups and WAL archive."
+  value       = module.postgresql_cluster.backup_bucket
 }

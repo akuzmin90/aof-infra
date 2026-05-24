@@ -81,15 +81,39 @@ module "cert_manager" {
   source = "../../modules/cert-manager"
 }
 
+module "cloudnative_pg_operator" {
+  source = "../../modules/cloudnative-pg-operator"
+}
+
 resource "random_password" "jenkins_admin" {
   length  = 24
   special = false
 }
 
+resource "random_password" "postgres_app" {
+  length  = 32
+  special = false
+}
+
+module "postgresql_cluster" {
+  source = "../../modules/postgresql-cluster"
+
+  app_password    = random_password.postgres_app.result
+  s3_endpoint_url = "http://minio.minio.svc.cluster.local:9000"
+  s3_access_key   = "minioadmin"
+  s3_secret_key   = "minioadmin123"
+
+  depends_on = [
+    module.cloudnative_pg_operator,
+    module.minio
+  ]
+}
+
 module "jenkins" {
   source = "../../modules/jenkins"
 
-  admin_password = random_password.jenkins_admin.result
+  admin_password    = random_password.jenkins_admin.result
+  extra_job_scripts = module.postgresql_cluster.jenkins_job_scripts
 }
 
 module "argocd" {
@@ -285,6 +309,68 @@ resource "kubernetes_ingress_v1" "frontend" {
 
               port {
                 number = 8080
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_secret" "minio_local_tls" {
+  metadata {
+    name      = local.local_tls_secret_name
+    namespace = module.minio.namespace
+  }
+
+  type = "kubernetes.io/tls"
+
+  data = {
+    "tls.crt" = file(local.local_tls_cert_file)
+    "tls.key" = file(local.local_tls_key_file)
+  }
+
+  lifecycle {
+    precondition {
+      condition     = fileexists(local.local_tls_cert_path) && fileexists(local.local_tls_key_path)
+      error_message = "Generate local TLS files first: k8s/kind/.local-certs/hitmakers.local.pem and k8s/kind/.local-certs/hitmakers.local-key.pem."
+    }
+  }
+}
+
+resource "kubernetes_ingress_v1" "minio_console" {
+  metadata {
+    name      = "minio-console"
+    namespace = module.minio.namespace
+
+    annotations = {
+      "nginx.ingress.kubernetes.io/proxy-body-size" = "0"
+    }
+  }
+
+  spec {
+    ingress_class_name = "nginx"
+
+    tls {
+      hosts       = ["s3.hitmakers.ru"]
+      secret_name = kubernetes_secret.minio_local_tls.metadata[0].name
+    }
+
+    rule {
+      host = "s3.hitmakers.ru"
+
+      http {
+        path {
+          path      = "/"
+          path_type = "Prefix"
+
+          backend {
+            service {
+              name = module.minio.service_name
+
+              port {
+                number = 9001
               }
             }
           }

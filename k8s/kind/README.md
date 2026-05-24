@@ -71,6 +71,7 @@ It lets the browser open local services with production-like hostnames:
 https://argocd.hitmakers.ru
 https://dev.hitmakers.ru
 https://jenkins.hitmakers.ru
+https://s3.hitmakers.ru
 ```
 
 Install the local mkcert CA:
@@ -88,7 +89,8 @@ mkcert `
   -key-file .local-certs/hitmakers.local-key.pem `
   argocd.hitmakers.ru `
   dev.hitmakers.ru `
-  jenkins.hitmakers.ru
+  jenkins.hitmakers.ru `
+  s3.hitmakers.ru
 ```
 
 Add local DNS overrides to `C:\Windows\System32\drivers\etc\hosts`.
@@ -98,6 +100,7 @@ Run your editor as Administrator and add:
 127.0.0.1 argocd.hitmakers.ru
 127.0.0.1 dev.hitmakers.ru
 127.0.0.1 jenkins.hitmakers.ru
+127.0.0.1 s3.hitmakers.ru
 ```
 
 If Docker cannot create the cluster, check that ports `80` and `443` are not already used by IIS, another nginx, another kind cluster, or another local proxy.
@@ -120,6 +123,7 @@ It also installs a local frontend hosting mock:
 - bucket `aof-front`
 - nginx frontend gateway
 - ingress host `https://dev.hitmakers.ru`
+- MinIO console ingress host `https://s3.hitmakers.ru`
 
 Terraform state is explicitly local:
 
@@ -148,6 +152,21 @@ Login:
 ```text
 username: admin
 password: value from tofu output
+```
+
+## MinIO Console Access
+
+Open:
+
+```text
+https://s3.hitmakers.ru
+```
+
+Login:
+
+```text
+username: minioadmin
+password: minioadmin123
 ```
 
 ## Argo CD Access
