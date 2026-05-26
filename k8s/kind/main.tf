@@ -124,6 +124,28 @@ module "minio" {
   source = "../../modules/minio"
 }
 
+resource "kubernetes_namespace" "app" {
+  metadata {
+    name = "aof"
+  }
+}
+
+module "redis" {
+  source = "../../modules/redis"
+
+  depends_on = [
+    kubernetes_namespace.app
+  ]
+}
+
+module "ignite" {
+  source = "../../modules/ignite"
+
+  depends_on = [
+    kubernetes_namespace.app
+  ]
+}
+
 module "frontend_gateway" {
   source = "../../modules/frontend-gateway"
 

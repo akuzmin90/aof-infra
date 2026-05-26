@@ -247,12 +247,21 @@ kind load docker-image aof-back:local --name aof
 Then deploy the app chart from the app repo, for example:
 
 ```powershell
+$pgPassword = tofu output -raw postgres_password
+
 helm upgrade --install aof-back ..\..\..\aof-back\chart `
   --namespace aof `
   --create-namespace `
   --set image.repository=aof-back `
   --set image.tag=local `
-  --set image.pullPolicy=Never
+  --set image.pullPolicy=Never `
+  --set-string database.password=$pgPassword
+```
+
+To route local frontend API calls from `https://dev.hitmakers.ru/api` to the backend, add:
+
+```powershell
+--set ingress.enabled=true
 ```
 
 ## Delete Cluster
