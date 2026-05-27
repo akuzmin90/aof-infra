@@ -206,6 +206,8 @@ resource "kubernetes_secret" "s3" {
 }
 
 resource "kubernetes_role_binding" "jenkins_database_jobs" {
+  count = var.enable_jenkins_database_jobs ? 1 : 0
+
   metadata {
     name      = "jenkins-database-jobs"
     namespace = kubernetes_namespace.database.metadata[0].name
@@ -284,31 +286,24 @@ resource "helm_release" "cluster" {
       secretName = kubernetes_secret.app.metadata[0].name
 
       cluster = {
-        instances = 2
+        instances = var.cluster_instances
 
         storage = {
-          size = "10Gi"
+          size         = var.storage_size
+          storageClass = var.storage_class
         }
 
         walStorage = {
-          enabled = true
-          size    = "2Gi"
+          enabled      = true
+          size         = var.wal_storage_size
+          storageClass = var.wal_storage_class
         }
 
-        resources = {
-          requests = {
-            cpu    = "250m"
-            memory = "512Mi"
-          }
-          limits = {
-            cpu    = "2"
-            memory = "2Gi"
-          }
-        }
+        resources = var.postgres_resources
 
         enableSuperuserAccess = false
-        enablePDB             = false
-        affinity              = {}
+        enablePDB             = var.enable_pdb
+        affinity              = var.postgres_affinity
 
         initdb = {
           database = local.app_database
@@ -319,17 +314,7 @@ resource "helm_release" "cluster" {
         }
 
         postgresql = {
-          parameters = {
-            max_connections                     = "250"
-            shared_buffers                      = "512MB"
-            effective_cache_size                = "1536MB"
-            maintenance_work_mem                = "128MB"
-            checkpoint_completion_target        = "0.9"
-            wal_compression                     = "on"
-            random_page_cost                    = "1.1"
-            effective_io_concurrency            = "200"
-            idle_in_transaction_session_timeout = "60000"
-          }
+          parameters = var.postgres_parameters
         }
       }
 
@@ -338,7 +323,7 @@ resource "helm_release" "cluster" {
         provider        = "s3"
         endpointURL     = var.s3_endpoint_url
         destinationPath = "s3://${local.backup_bucket}/${local.backup_path}"
-        retentionPolicy = "14d"
+        retentionPolicy = var.backup_retention_policy
 
         s3 = {
           region    = var.s3_region
@@ -368,9 +353,10 @@ resource "helm_release" "cluster" {
         scheduledBackups = [
           {
             name                 = "daily-backup"
-            schedule             = "0 0 2 * * *"
+            schedule             = var.backup_schedule
             backupOwnerReference = "self"
             method               = "barmanObjectStore"
+            retentionPolicy      = var.backup_retention_policy
           }
         ]
       }
@@ -384,14 +370,11 @@ resource "helm_release" "cluster" {
 
       poolers = [
         {
-          name      = "rw"
-          type      = "rw"
-          poolMode  = "transaction"
-          instances = 2
-          parameters = {
-            max_client_conn   = "1000"
-            default_pool_size = "25"
-          }
+          name       = "rw"
+          type       = "rw"
+          poolMode   = "transaction"
+          instances  = var.pooler_instances
+          parameters = var.pooler_parameters
         }
       ]
     })

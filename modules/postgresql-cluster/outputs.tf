@@ -45,8 +45,8 @@ output "backup_bucket" {
 
 output "jenkins_job_scripts" {
   description = "Jenkins Job DSL scripts owned by this PostgreSQL module."
-  value = [
+  value = var.enable_jenkins_database_jobs ? [
     local.dump_job_script,
     local.restore_job_script
-  ]
+  ] : []
 }

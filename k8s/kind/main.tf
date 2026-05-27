@@ -103,6 +103,8 @@ module "postgresql_cluster" {
   s3_access_key   = "minioadmin"
   s3_secret_key   = "minioadmin123"
 
+  enable_jenkins_database_jobs = true
+
   depends_on = [
     module.cloudnative_pg_operator,
     module.minio
