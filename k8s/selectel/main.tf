@@ -71,7 +71,9 @@ module "postgresql_cluster" {
 
   cluster_instances = 1
   storage_size      = "200Gi"
+  storage_class     = "fast.ru-7a"
   wal_storage_size  = "50Gi"
+  wal_storage_class = "fast.ru-7a"
 
   postgres_resources = {
     requests = {
