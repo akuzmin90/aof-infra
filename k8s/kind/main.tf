@@ -98,6 +98,11 @@ resource "random_password" "postgres_app" {
 module "postgresql_cluster" {
   source = "../../modules/postgresql-cluster"
 
+  name             = "local"
+  namespace        = "database"
+  cluster_name     = "aof-db"
+  create_namespace = true
+
   app_password    = random_password.postgres_app.result
   s3_endpoint_url = "http://minio.minio.svc.cluster.local:9000"
   s3_access_key   = "minioadmin"
@@ -135,6 +140,9 @@ resource "kubernetes_namespace" "app" {
 module "redis" {
   source = "../../modules/redis"
 
+  namespace        = "aof"
+  create_namespace = false
+
   depends_on = [
     kubernetes_namespace.app
   ]
@@ -142,6 +150,20 @@ module "redis" {
 
 module "ignite" {
   source = "../../modules/ignite"
+
+  namespace        = "aof"
+  create_namespace = false
+
+  depends_on = [
+    kubernetes_namespace.app
+  ]
+}
+
+module "rabbitmq" {
+  source = "../../modules/rabbitmq"
+
+  namespace        = "aof"
+  create_namespace = false
 
   depends_on = [
     kubernetes_namespace.app

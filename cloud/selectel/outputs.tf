@@ -60,3 +60,20 @@ output "k8s_kubeconfig" {
   value       = data.selectel_mks_kubeconfig_v1.main.raw_config
   sensitive   = true
 }
+
+output "frontend_s3_endpoint_url" {
+  description = "Selectel S3 endpoint for frontend uploads."
+  value       = "https://s3.ru-7.storage.selcloud.ru"
+}
+
+output "frontend_s3_region" {
+  description = "Selectel S3 region for frontend uploads."
+  value       = "ru-7"
+}
+
+output "frontend_s3_buckets" {
+  description = "Per-instance buckets used for frontend static assets."
+  value = {
+    for instance, bucket in openstack_objectstorage_container_v1.frontend_instance : instance => bucket.name
+  }
+}

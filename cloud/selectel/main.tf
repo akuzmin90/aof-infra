@@ -25,7 +25,21 @@ terraform {
       source  = "terraform-provider-openstack/openstack"
       version = "3.0.0"
     }
+
   }
+}
+
+locals {
+  frontend_bucket_names = {
+    dev     = "hitmakers-aof-front-dev"
+    feature = "hitmakers-aof-front-feature"
+    release = "hitmakers-aof-front-release"
+  }
+}
+
+moved {
+  from = openstack_objectstorage_container_v1.frontend
+  to   = openstack_objectstorage_container_v1.frontend_legacy
 }
 
 provider "selectel" {
@@ -99,8 +113,8 @@ resource "selectel_mks_nodegroup_v1" "compute" {
   region                       = selectel_mks_cluster_v1.main.region
   availability_zone            = "ru-7a"
   nodes_count                  = 2
-  cpus                         = 4
-  ram_mb                       = 16384
+  cpus                         = 2
+  ram_mb                       = 8192
   volume_gb                    = 32
   volume_type                  = "fast.ru-7a"
   install_nvidia_device_plugin = false
@@ -118,8 +132,8 @@ resource "selectel_mks_nodegroup_v1" "database" {
   region                       = selectel_mks_cluster_v1.main.region
   availability_zone            = "ru-7a"
   nodes_count                  = 1
-  cpus                         = 8
-  ram_mb                       = 32768
+  cpus                         = 4
+  ram_mb                       = 16384
   volume_gb                    = 64
   volume_type                  = "fast.ru-7a"
   install_nvidia_device_plugin = false
@@ -156,4 +170,20 @@ resource "selectel_craas_token_v2" "registry_rw" {
   registry_ids   = [selectel_craas_registry_v1.main.id]
   is_set         = true
   expires_at     = "2029-01-01T00:00:00Z"
+}
+
+resource "openstack_objectstorage_container_v1" "frontend_instance" {
+  for_each = local.frontend_bucket_names
+
+  name           = each.value
+  region         = "ru-7"
+  container_read = ".r:*"
+  force_destroy  = false
+}
+
+resource "openstack_objectstorage_container_v1" "frontend_legacy" {
+  name           = "hitmakers-aof-front"
+  region         = "ru-7"
+  container_read = ".r:*"
+  force_destroy  = false
 }

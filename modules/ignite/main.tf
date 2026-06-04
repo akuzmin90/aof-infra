@@ -1,7 +1,15 @@
+resource "kubernetes_namespace" "ignite" {
+  count = var.create_namespace ? 1 : 0
+
+  metadata {
+    name = var.namespace
+  }
+}
+
 resource "kubernetes_config_map" "ignite" {
   metadata {
     name      = "ignite-config"
-    namespace = "aof"
+    namespace = var.namespace
   }
 
   data = {
@@ -24,7 +32,7 @@ resource "kubernetes_config_map" "ignite" {
 resource "kubernetes_deployment" "ignite" {
   metadata {
     name      = "ignite"
-    namespace = "aof"
+    namespace = var.namespace
 
     labels = {
       app = "ignite"
@@ -117,7 +125,7 @@ resource "kubernetes_deployment" "ignite" {
 resource "kubernetes_service" "ignite" {
   metadata {
     name      = "ignite"
-    namespace = "aof"
+    namespace = var.namespace
   }
 
   spec {

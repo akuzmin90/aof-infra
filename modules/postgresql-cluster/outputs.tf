@@ -3,6 +3,11 @@ output "namespace" {
   value       = local.namespace
 }
 
+output "name" {
+  description = "Instance name."
+  value       = var.name
+}
+
 output "cluster_name" {
   description = "CloudNativePG cluster name."
   value       = local.cluster_name
@@ -21,6 +26,11 @@ output "username" {
 output "jdbc_url" {
   description = "JDBC URL for aof-back inside the Kubernetes cluster."
   value       = "jdbc:postgresql://${local.rw_host}:5432/${local.app_database}"
+}
+
+output "app_secret_name" {
+  description = "Kubernetes secret with application database credentials."
+  value       = local.app_secret_name
 }
 
 output "rw_host" {

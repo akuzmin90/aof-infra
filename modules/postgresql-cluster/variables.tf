@@ -4,6 +4,57 @@ variable "app_password" {
   sensitive   = true
 }
 
+variable "name" {
+  description = "Short instance name, for example feature or release."
+  type        = string
+}
+
+variable "namespace" {
+  description = "Namespace where this PostgreSQL instance is deployed."
+  type        = string
+}
+
+variable "create_namespace" {
+  description = "Create the namespace before installing PostgreSQL."
+  type        = bool
+  default     = true
+}
+
+variable "cluster_name" {
+  description = "CloudNativePG cluster name."
+  type        = string
+}
+
+variable "app_database" {
+  description = "Application database name."
+  type        = string
+  default     = "aof"
+}
+
+variable "app_user" {
+  description = "Application database user."
+  type        = string
+  default     = "aof"
+}
+
+variable "app_secret_name" {
+  description = "Kubernetes secret name for application database credentials."
+  type        = string
+  default     = ""
+}
+
+variable "backup_bucket" {
+  description = "S3 bucket for physical backups and WAL archive."
+  type        = string
+  default     = "aof-postgres-backups"
+}
+
+variable "dump_bucket" {
+  description = "S3 bucket for manual logical dumps."
+  type        = string
+  default     = "aof-postgres-dumps"
+}
+
 variable "s3_endpoint_url" {
   description = "S3-compatible endpoint used for PostgreSQL physical backups and logical dumps."
   type        = string

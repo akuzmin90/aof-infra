@@ -1,6 +1,6 @@
 output "namespace" {
   description = "Namespace where the frontend gateway is installed."
-  value       = kubernetes_namespace.frontend.metadata[0].name
+  value       = var.namespace
 }
 
 output "service_name" {

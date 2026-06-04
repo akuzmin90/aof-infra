@@ -1,5 +1,5 @@
 output "namespace" {
-  value = "aof"
+  value = var.namespace
 }
 
 output "service_name" {
@@ -7,5 +7,5 @@ output "service_name" {
 }
 
 output "discovery_address" {
-  value = "${kubernetes_service.ignite.metadata[0].name}.aof.svc.cluster.local:47500"
+  value = "${kubernetes_service.ignite.metadata[0].name}.${var.namespace}.svc.cluster.local:47500"
 }

@@ -1,19 +1,19 @@
 locals {
-  namespace             = "database"
-  cluster_name          = "aof-db"
-  app_database          = "aof"
-  app_user              = "aof"
-  app_secret_name       = "aof-db-app"
-  backup_bucket         = "aof-postgres-backups"
-  dump_bucket           = "aof-postgres-dumps"
-  backup_path           = "physical"
-  dump_path             = "manual"
+  namespace             = var.namespace
+  cluster_name          = var.cluster_name
+  app_database          = var.app_database
+  app_user              = var.app_user
+  app_secret_name       = var.app_secret_name != "" ? var.app_secret_name : "${var.cluster_name}-app"
+  backup_bucket         = var.backup_bucket
+  dump_bucket           = var.dump_bucket
+  backup_path           = "${var.name}/physical"
+  dump_path             = "${var.name}/manual"
   rw_host               = "${local.cluster_name}-rw.${local.namespace}.svc.cluster.local"
   ro_host               = "${local.cluster_name}-ro.${local.namespace}.svc.cluster.local"
   s3_credentials_secret = "aof-postgres-s3"
   dump_job_script       = <<-EOT
-    pipelineJob('aof-db-dump-manual') {
-      description('Creates a manual logical PostgreSQL dump with pg_dump -Fc and uploads it to the configured S3-compatible bucket.')
+    pipelineJob('aof-db-${var.name}-dump-manual') {
+      description('Creates a manual logical PostgreSQL dump for ${var.name} with pg_dump -Fc and uploads it to the configured S3-compatible bucket.')
       keepDependencies(false)
       parameters {
         stringParam('DATABASE', '${local.app_database}', 'Database to dump.')
@@ -92,8 +92,8 @@ locals {
   EOT
 
   restore_job_script = <<-EOT
-    pipelineJob('aof-db-restore-dev') {
-      description('Restores a logical dump into the dedicated dev restore database. This job intentionally does not target production.')
+    pipelineJob('aof-db-${var.name}-restore-dev') {
+      description('Restores a ${var.name} logical dump into the dedicated dev restore database. This job intentionally does not target production.')
       keepDependencies(false)
       parameters {
         stringParam('DUMP_OBJECT', '', 'Object key inside ${local.dump_bucket}, for example ${local.dump_path}/aof-manual-20260525T120000Z.dump.')
@@ -174,6 +174,8 @@ locals {
 }
 
 resource "kubernetes_namespace" "database" {
+  count = var.create_namespace ? 1 : 0
+
   metadata {
     name = local.namespace
   }
@@ -182,7 +184,7 @@ resource "kubernetes_namespace" "database" {
 resource "kubernetes_secret" "app" {
   metadata {
     name      = local.app_secret_name
-    namespace = kubernetes_namespace.database.metadata[0].name
+    namespace = local.namespace
   }
 
   type = "kubernetes.io/basic-auth"
@@ -196,7 +198,7 @@ resource "kubernetes_secret" "app" {
 resource "kubernetes_secret" "s3" {
   metadata {
     name      = local.s3_credentials_secret
-    namespace = kubernetes_namespace.database.metadata[0].name
+    namespace = local.namespace
   }
 
   data = {
@@ -209,8 +211,8 @@ resource "kubernetes_role_binding" "jenkins_database_jobs" {
   count = var.enable_jenkins_database_jobs ? 1 : 0
 
   metadata {
-    name      = "jenkins-database-jobs"
-    namespace = kubernetes_namespace.database.metadata[0].name
+    name      = "jenkins-${var.name}-database-jobs"
+    namespace = local.namespace
   }
 
   role_ref {
@@ -228,8 +230,8 @@ resource "kubernetes_role_binding" "jenkins_database_jobs" {
 
 resource "kubernetes_job_v1" "object_store_bootstrap" {
   metadata {
-    name      = "aof-postgres-object-store-bootstrap"
-    namespace = kubernetes_namespace.database.metadata[0].name
+    name      = "${var.name}-postgres-object-store-bootstrap"
+    namespace = local.namespace
   }
 
   spec {
@@ -264,7 +266,7 @@ resource "kubernetes_job_v1" "object_store_bootstrap" {
 
 resource "helm_release" "cluster" {
   name       = local.cluster_name
-  namespace  = kubernetes_namespace.database.metadata[0].name
+  namespace  = local.namespace
   repository = "https://cloudnative-pg.github.io/charts"
   chart      = "cluster"
   version    = "0.6.1"

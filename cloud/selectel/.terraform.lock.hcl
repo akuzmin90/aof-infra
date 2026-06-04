@@ -1,17 +1,11 @@
 # This file is maintained automatically by "tofu init".
 # Manual edits may be lost in future updates.
 
-provider "registry.opentofu.org/hashicorp/helm" {
-  version = "3.1.2"
+provider "registry.opentofu.org/hashicorp/random" {
+  version     = "3.9.0"
+  constraints = "~> 3.7"
   hashes = [
-    "h1:EMClfcSNrMMzgnILRDIerdXw3OAULaQl9z6sCijLvmA=",
-  ]
-}
-
-provider "registry.opentofu.org/hashicorp/kubernetes" {
-  version = "3.1.0"
-  hashes = [
-    "h1:DyKnb8Iyd3s+aZGk1xZtz11e/NZ0wHepF5wlliyD42E=",
+    "h1:ig2s1IS9IzehorRjvVAnKIsUUj8fkgyxct1L/kswcc4=",
   ]
 }
 

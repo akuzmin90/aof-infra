@@ -1,7 +1,15 @@
+resource "kubernetes_namespace" "redis" {
+  count = var.create_namespace ? 1 : 0
+
+  metadata {
+    name = var.namespace
+  }
+}
+
 resource "kubernetes_deployment" "redis" {
   metadata {
     name      = "redis"
-    namespace = "aof"
+    namespace = var.namespace
 
     labels = {
       app = "redis"
@@ -77,7 +85,7 @@ resource "kubernetes_deployment" "redis" {
 resource "kubernetes_service" "redis" {
   metadata {
     name      = "redis"
-    namespace = "aof"
+    namespace = var.namespace
   }
 
   spec {
