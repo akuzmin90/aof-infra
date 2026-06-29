@@ -184,6 +184,12 @@ variable "backup_schedule" {
   default     = "0 0 2 * * *"
 }
 
+variable "logical_backup_schedule" {
+  description = "Kubernetes CronJob schedule for automatic logical pg_dump backups, in Europe/Moscow time."
+  type        = string
+  default     = "10 3 * * *"
+}
+
 variable "pooler_instances" {
   description = "Number of PgBouncer read-write pooler instances."
   type        = number

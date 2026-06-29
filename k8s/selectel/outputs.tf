@@ -72,3 +72,84 @@ output "aof_back_hosts" {
     for name in keys(local.app_instances) : name => "${name}.${var.app_domain_suffix}"
   }
 }
+
+output "public_sites_namespace" {
+  description = "Namespace for public legacy websites."
+  value       = var.public_sites_enabled ? local.public_sites_namespace : null
+}
+
+output "public_sites_ingresses" {
+  description = "Public legacy website ingress names."
+  value = var.public_sites_enabled ? {
+    for name, site in module.public_sites : name => site.ingress_name
+  } : {}
+}
+
+output "public_sites_backup_s3_endpoint_url" {
+  description = "S3 endpoint for public sites backups."
+  value       = local.public_sites_backup_s3.endpoint_url
+}
+
+output "public_sites_backup_s3_region" {
+  description = "S3 region for public sites backups."
+  value       = local.public_sites_backup_s3.region
+}
+
+output "public_sites_backup_s3_bucket" {
+  description = "S3 bucket for public sites backups."
+  value       = openstack_objectstorage_container_v1.public_sites_backups.name
+}
+
+output "public_sites_backup_s3_secret_name" {
+  description = "Kubernetes Secret in public-sites containing backup S3 credentials."
+  value       = var.public_sites_enabled ? kubernetes_secret.public_sites_backup_s3[0].metadata[0].name : null
+}
+
+output "public_sites_backup_s3_access_key" {
+  description = "S3 access key for public sites backups."
+  value       = var.public_sites_backup_s3_access_key
+  sensitive   = true
+}
+
+output "public_sites_backup_s3_secret_key" {
+  description = "S3 secret key for public sites backups."
+  value       = var.public_sites_backup_s3_secret_key
+  sensitive   = true
+}
+
+output "observability_namespace" {
+  description = "Namespace where Grafana, Loki, and Alloy are deployed."
+  value       = module.observability.namespace
+}
+
+output "observability_loki_bucket" {
+  description = "S3 bucket used by Loki."
+  value       = var.observability_loki_s3_bucket
+}
+
+output "dedicated_logs_push_url" {
+  description = "Authenticated Loki-compatible push endpoint for dedicated server Alloy agents."
+  value       = "https://grafana.${var.app_domain_suffix}/loki/api/v1/push"
+}
+
+output "dedicated_logs_basic_auth_username" {
+  description = "Basic auth username for dedicated server Alloy agents."
+  value       = "alloy"
+}
+
+output "dedicated_logs_basic_auth_password" {
+  description = "Basic auth password for dedicated server Alloy agents."
+  value       = random_password.dedicated_logs_basic_auth.result
+  sensitive   = true
+}
+
+output "grafana_admin_username" {
+  description = "Grafana admin username."
+  value       = module.observability.grafana_admin_username
+}
+
+output "grafana_admin_password" {
+  description = "Grafana admin password."
+  value       = module.observability.grafana_admin_password
+  sensitive   = true
+}

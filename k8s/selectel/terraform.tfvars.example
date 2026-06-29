@@ -1,0 +1,66 @@
+kubeconfig_path = "../../cloud/selectel/kubeconfig.yaml"
+
+selectel_domain_name = "replace-with-selectel-account-id"
+selectel_username    = "replace-with-selectel-service-user"
+selectel_password    = "replace-with-selectel-service-user-password"
+selectel_project_id  = "replace-with-selectel-project-id"
+
+postgres_s3_endpoint_url = "https://s3.ru-7.storage.selcloud.ru"
+postgres_s3_region       = "ru-7"
+postgres_s3_access_key   = "replace-with-postgres-backup-s3-access-key"
+postgres_s3_secret_key   = "replace-with-postgres-backup-s3-secret-key"
+
+# Get the buckets from cloud/selectel output after applying the cloud layer:
+# tofu -chdir=cloud/selectel output -json frontend_s3_buckets
+#
+# S3 access keys must be provided from an existing Selectel S3 credential.
+frontend_s3_endpoint_url = "https://s3.ru-7.storage.selcloud.ru"
+frontend_s3_buckets = {
+  dev     = "hitmakers-aof-front-dev"
+  feature = "hitmakers-aof-front-feature"
+  release = "hitmakers-aof-front-release"
+}
+frontend_s3_access_key   = "replace-with-existing-s3-access-key"
+frontend_s3_secret_key   = "replace-with-existing-s3-secret-key"
+
+app_domain_suffix               = "k8s.zazer.fun"
+jenkins_host                    = "jenkins.k8s.zazer.fun"
+aof_back_image_repository       = "cr.selcloud.ru/aof-registry/aof-back"
+aof_back_image_tag              = "latest"
+aof_back_image_pull_secret_names = []
+
+# Get these from cloud/selectel outputs after applying the cloud layer:
+# tofu -chdir=cloud/selectel output -raw registry_username
+# tofu -chdir=cloud/selectel output -raw registry_token
+registry_server   = "cr.selcloud.ru"
+registry_username = "replace-with-registry-username"
+registry_password = "replace-with-registry-token"
+
+# Enable cert-manager TLS after DNS points at the ingress controller.
+# The current Terraform release intentionally renders ingress without tls: [].
+# Future per-instance Helm values should look like:
+# ingress:
+#   annotations:
+#     cert-manager.io/cluster-issuer: letsencrypt-prod
+#   tls:
+#     - secretName: feature-hitmakers-ru-tls
+#       hosts:
+#         - feature.k8s.zazer.fun
+
+# Legacy public sites. Keep disabled until ready to create the namespace and workloads.
+public_sites_enabled     = false
+public_sites_tls_enabled = false
+
+public_sites_backup_s3_access_key = "replace-with-public-sites-backup-s3-access-key"
+public_sites_backup_s3_secret_key = "replace-with-public-sites-backup-s3-secret-key"
+
+# Get these from cloud/selectel outputs after applying the cloud layer:
+# tofu -chdir=cloud/selectel output -raw observability_loki_s3_endpoint_url
+# tofu -chdir=cloud/selectel output -raw observability_loki_s3_region
+# tofu -chdir=cloud/selectel output -raw observability_loki_s3_bucket
+observability_loki_s3_endpoint_url = "https://s3.ru-7.storage.selcloud.ru"
+observability_loki_s3_region       = "ru-7"
+observability_loki_s3_bucket       = "hitmakers-loki-logs"
+
+observability_s3_access_key = "replace-with-observability-loki-s3-access-key"
+observability_s3_secret_key = "replace-with-observability-loki-s3-secret-key"

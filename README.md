@@ -256,16 +256,19 @@ Useful connection values:
 ```powershell
 cd k8s/kind
 tofu output postgres_jdbc_url
+tofu output postgres_direct_jdbc_url
 tofu output postgres_username
 tofu output -raw postgres_password
 cd ../..
 ```
 
-The backend uses:
+The backend uses the PgBouncer JDBC URL from `postgres_jdbc_url`:
 
 ```text
-jdbc:postgresql://aof-db-rw.database.svc.cluster.local:5432/aof
+jdbc:postgresql://aof-db-pooler-rw.database.svc.cluster.local:5432/aof?prepareThreshold=0
 ```
+
+Use `postgres_direct_jdbc_url` only for admin and maintenance jobs that intentionally bypass PgBouncer.
 
 Manual logical dumps and dev restores are handled by Jenkins jobs:
 

@@ -35,6 +35,8 @@ locals {
     feature = "hitmakers-aof-front-feature"
     release = "hitmakers-aof-front-release"
   }
+
+  observability_loki_bucket_name = "hitmakers-loki-logs"
 }
 
 moved {
@@ -186,4 +188,10 @@ resource "openstack_objectstorage_container_v1" "frontend_legacy" {
   region         = "ru-7"
   container_read = ".r:*"
   force_destroy  = false
+}
+
+resource "openstack_objectstorage_container_v1" "observability_loki_logs" {
+  name          = local.observability_loki_bucket_name
+  region        = "ru-7"
+  force_destroy = false
 }

@@ -24,3 +24,11 @@ provider "registry.opentofu.org/hashicorp/random" {
     "h1:ig2s1IS9IzehorRjvVAnKIsUUj8fkgyxct1L/kswcc4=",
   ]
 }
+
+provider "registry.opentofu.org/terraform-provider-openstack/openstack" {
+  version     = "3.0.0"
+  constraints = "3.0.0"
+  hashes = [
+    "h1:i7sj9flNOPDNraNq3QztV+cQ1JeqSQF30xQrY6Vi2Yk=",
+  ]
+}

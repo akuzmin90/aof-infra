@@ -26,6 +26,11 @@ terraform {
       version = "~> 2.38"
     }
 
+    openstack = {
+      source  = "terraform-provider-openstack/openstack"
+      version = "3.0.0"
+    }
+
     random = {
       source  = "hashicorp/random"
       version = "~> 3.7"
@@ -41,6 +46,15 @@ provider "helm" {
   kubernetes {
     config_path = var.kubeconfig_path
   }
+}
+
+provider "openstack" {
+  auth_url    = "https://cloud.api.selcloud.ru/identity/v3"
+  domain_name = var.selectel_domain_name
+  tenant_id   = var.selectel_project_id
+  user_name   = var.selectel_username
+  password    = var.selectel_password
+  region      = "ru-7"
 }
 
 import {
@@ -67,6 +81,11 @@ removed {
   lifecycle {
     destroy = false
   }
+}
+
+moved {
+  from = kubernetes_ingress_v1.grafana_temporary
+  to   = kubernetes_ingress_v1.grafana
 }
 
 module "ingress_nginx" {
@@ -99,6 +118,35 @@ locals {
     release = {
       namespace        = "aof-release"
       database_cluster = "aof-release-db"
+    }
+  }
+
+  public_sites_namespace = "public-sites"
+  public_sites_backup_s3 = {
+    endpoint_url = "https://s3.ru-7.storage.selcloud.ru"
+    region       = "ru-7"
+    bucket       = "hitmakers-public-sites-backups"
+    secret_name  = "public-sites-backup-s3"
+  }
+
+  observability_namespace = "observability"
+
+  public_sites = {
+    l-zazer = {
+      hosts                    = ["l.zazer.mobi"]
+      files_size               = "10Gi"
+      db_size                  = "10Gi"
+      backup_s3_site_prefix    = "l-zazer-mobi"
+      restore_strip_components = 0
+      restore_s3_backup_path   = "l-zazer-mobi/20260617-091610"
+    }
+    hitmakers = {
+      hosts                    = ["hitmakers.games", "hitmakers.website"]
+      files_size               = "20Gi"
+      db_size                  = "10Gi"
+      backup_s3_site_prefix    = "hitmakers-copy"
+      restore_strip_components = 1
+      restore_s3_backup_path   = "hitmakers-copy/20260617-091610"
     }
   }
 
@@ -150,12 +198,78 @@ resource "random_password" "postgres_app" {
   special = false
 }
 
+resource "random_password" "wordpress_db" {
+  for_each = var.public_sites_enabled ? local.public_sites : {}
+
+  length  = 32
+  special = false
+}
+
+resource "random_password" "wordpress_db_root" {
+  for_each = var.public_sites_enabled ? local.public_sites : {}
+
+  length  = 32
+  special = false
+}
+
+resource "random_password" "dedicated_logs_basic_auth" {
+  length  = 32
+  special = false
+}
+
 resource "kubernetes_namespace" "app" {
   for_each = local.app_instances
 
   metadata {
     name = each.value.namespace
   }
+}
+
+resource "kubernetes_namespace" "public_sites" {
+  count = var.public_sites_enabled ? 1 : 0
+
+  metadata {
+    name = local.public_sites_namespace
+  }
+}
+
+resource "openstack_objectstorage_container_v1" "public_sites_backups" {
+  name          = local.public_sites_backup_s3.bucket
+  region        = local.public_sites_backup_s3.region
+  force_destroy = false
+}
+
+resource "kubernetes_secret" "public_sites_backup_s3" {
+  count = var.public_sites_enabled ? 1 : 0
+
+  metadata {
+    name      = local.public_sites_backup_s3.secret_name
+    namespace = local.public_sites_namespace
+
+    labels = {
+      "app.kubernetes.io/name"       = "public-sites"
+      "app.kubernetes.io/component"  = "backup-s3"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  type = "Opaque"
+
+  data = {
+    endpoint-url          = local.public_sites_backup_s3.endpoint_url
+    region                = local.public_sites_backup_s3.region
+    bucket                = openstack_objectstorage_container_v1.public_sites_backups.name
+    access-key            = var.public_sites_backup_s3_access_key
+    secret-key            = var.public_sites_backup_s3_secret_key
+    AWS_ENDPOINT_URL      = local.public_sites_backup_s3.endpoint_url
+    AWS_DEFAULT_REGION    = local.public_sites_backup_s3.region
+    AWS_ACCESS_KEY_ID     = var.public_sites_backup_s3_access_key
+    AWS_SECRET_ACCESS_KEY = var.public_sites_backup_s3_secret_key
+  }
+
+  depends_on = [
+    kubernetes_namespace.public_sites
+  ]
 }
 
 resource "kubernetes_secret" "registry_pull" {
@@ -245,7 +359,7 @@ module "postgresql_cluster" {
   cluster_instances = 1
   storage_size      = "20Gi"
   storage_class     = "fast.ru-7a"
-  wal_storage_size  = "4Gi"
+  wal_storage_size  = "32Gi"
   wal_storage_class = "fast.ru-7a"
 
   postgres_resources  = local.small_postgres_resources
@@ -287,6 +401,176 @@ module "frontend_gateway" {
 
   depends_on = [
     kubernetes_namespace.app
+  ]
+}
+
+module "public_sites" {
+  for_each = var.public_sites_enabled ? local.public_sites : {}
+
+  source = "../../modules/public-sites"
+
+  name      = each.key
+  namespace = local.public_sites_namespace
+  hosts     = each.value.hosts
+
+  db_password      = random_password.wordpress_db[each.key].result
+  db_root_password = random_password.wordpress_db_root[each.key].result
+
+  files_size = each.value.files_size
+  db_size    = each.value.db_size
+
+  backup_s3_site_prefix = each.value.backup_s3_site_prefix
+
+  restore_generation       = 0
+  restore_backup_pvc_name  = null
+  restore_backup_path      = null
+  restore_strip_components = each.value.restore_strip_components
+  restore_s3_backup_path   = each.value.restore_s3_backup_path
+
+  tls_enabled         = var.public_sites_tls_enabled
+  cluster_issuer_name = module.cert_manager.cluster_issuer_name
+
+  depends_on = [
+    kubernetes_namespace.public_sites,
+    module.ingress_nginx
+  ]
+}
+
+module "observability" {
+  source = "../../modules/observability"
+
+  namespace       = local.observability_namespace
+  s3_endpoint_url = var.observability_loki_s3_endpoint_url
+  s3_region       = var.observability_loki_s3_region
+  s3_bucket       = var.observability_loki_s3_bucket
+  s3_access_key   = coalesce(var.observability_s3_access_key, var.postgres_s3_access_key)
+  s3_secret_key   = coalesce(var.observability_s3_secret_key, var.postgres_s3_secret_key)
+
+  grafana_public_url      = "https://grafana.${var.app_domain_suffix}"
+  grafana_public_sub_path = null
+}
+
+resource "kubernetes_secret" "dedicated_logs_basic_auth" {
+  metadata {
+    name      = "dedicated-logs-basic-auth"
+    namespace = module.observability.namespace
+
+    labels = {
+      "app.kubernetes.io/name"       = "alloy-gateway"
+      "app.kubernetes.io/component"  = "dedicated-logs-auth"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  type = "Opaque"
+
+  data = {
+    auth = "alloy:${random_password.dedicated_logs_basic_auth.bcrypt_hash}"
+  }
+
+  depends_on = [
+    module.observability
+  ]
+}
+
+resource "kubernetes_ingress_v1" "grafana" {
+  metadata {
+    name      = "grafana"
+    namespace = module.observability.namespace
+
+    annotations = {
+      "cert-manager.io/cluster-issuer"              = module.cert_manager.cluster_issuer_name
+      "nginx.ingress.kubernetes.io/proxy-body-size" = "16m"
+      "nginx.ingress.kubernetes.io/ssl-redirect"    = "true"
+    }
+  }
+
+  spec {
+    ingress_class_name = "nginx"
+
+    rule {
+      host = "grafana.${var.app_domain_suffix}"
+
+      http {
+        path {
+          path      = "/"
+          path_type = "Prefix"
+
+          backend {
+            service {
+              name = module.observability.grafana_service_name
+
+              port {
+                number = 80
+              }
+            }
+          }
+        }
+      }
+    }
+
+    tls {
+      hosts       = ["grafana.${var.app_domain_suffix}"]
+      secret_name = "grafana-k8s-zazer-fun-tls"
+    }
+  }
+
+  depends_on = [
+    module.ingress_nginx,
+    module.cert_manager,
+    module.observability
+  ]
+}
+
+resource "kubernetes_ingress_v1" "dedicated_logs_gateway" {
+  metadata {
+    name      = "dedicated-logs-gateway"
+    namespace = module.observability.namespace
+
+    annotations = {
+      "cert-manager.io/cluster-issuer"              = module.cert_manager.cluster_issuer_name
+      "nginx.ingress.kubernetes.io/auth-realm"      = "dedicated logs"
+      "nginx.ingress.kubernetes.io/auth-secret"     = kubernetes_secret.dedicated_logs_basic_auth.metadata[0].name
+      "nginx.ingress.kubernetes.io/auth-type"       = "basic"
+      "nginx.ingress.kubernetes.io/proxy-body-size" = "16m"
+      "nginx.ingress.kubernetes.io/ssl-redirect"    = "true"
+    }
+  }
+
+  spec {
+    ingress_class_name = "nginx"
+
+    rule {
+      host = "grafana.${var.app_domain_suffix}"
+
+      http {
+        path {
+          path      = "/loki/api/v1/push"
+          path_type = "Exact"
+
+          backend {
+            service {
+              name = module.observability.alloy_gateway_service_name
+
+              port {
+                name = "loki-push"
+              }
+            }
+          }
+        }
+      }
+    }
+
+    tls {
+      hosts       = ["grafana.${var.app_domain_suffix}"]
+      secret_name = "grafana-k8s-zazer-fun-tls"
+    }
+  }
+
+  depends_on = [
+    module.ingress_nginx,
+    module.cert_manager,
+    module.observability
   ]
 }
 

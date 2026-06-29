@@ -6,8 +6,9 @@ locals {
   app_secret_name       = var.app_secret_name != "" ? var.app_secret_name : "${var.cluster_name}-app"
   backup_bucket         = var.backup_bucket
   dump_bucket           = var.dump_bucket
-  backup_path           = "${var.name}/physical"
+  backup_path           = "${var.name}/physical-v2"
   dump_path             = "${var.name}/manual"
+  automatic_dump_path   = "${var.name}/automatic"
   rw_host               = "${local.cluster_name}-rw.${local.namespace}.svc.cluster.local"
   ro_host               = "${local.cluster_name}-ro.${local.namespace}.svc.cluster.local"
   s3_credentials_secret = "aof-postgres-s3"
@@ -258,10 +259,170 @@ resource "kubernetes_job_v1" "object_store_bootstrap" {
           ]
         }
       }
+
     }
   }
 
   wait_for_completion = true
+}
+
+resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
+  metadata {
+    name      = "${var.name}-postgres-logical-backup-to-s3"
+    namespace = local.namespace
+
+    labels = {
+      "app.kubernetes.io/name"       = "postgresql"
+      "app.kubernetes.io/instance"   = var.name
+      "app.kubernetes.io/component"  = "logical-backup"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  spec {
+    schedule                      = var.logical_backup_schedule
+    timezone                      = "Europe/Moscow"
+    concurrency_policy            = "Forbid"
+    successful_jobs_history_limit = 3
+    failed_jobs_history_limit     = 3
+
+    job_template {
+      metadata {
+        labels = {
+          "app.kubernetes.io/name"       = "postgresql"
+          "app.kubernetes.io/instance"   = var.name
+          "app.kubernetes.io/component"  = "logical-backup"
+          "app.kubernetes.io/managed-by" = "terraform"
+        }
+      }
+
+      spec {
+        backoff_limit              = 1
+        ttl_seconds_after_finished = 604800
+
+        template {
+          metadata {
+            labels = {
+              "app.kubernetes.io/name"       = "postgresql"
+              "app.kubernetes.io/instance"   = var.name
+              "app.kubernetes.io/component"  = "logical-backup"
+              "app.kubernetes.io/managed-by" = "terraform"
+            }
+          }
+
+          spec {
+            restart_policy = "Never"
+
+            init_container {
+              name              = "dump-database"
+              image             = "postgres:16-alpine"
+              image_pull_policy = "IfNotPresent"
+              command = [
+                "sh",
+                "-c",
+                "set -eu; TS=$(TZ=Europe/Moscow date +%Y%m%d-%H%M%S); DUMP_FILE=\"${local.app_database}-$TS.dump\"; pg_dump -Fc -h \"$PGHOST\" -p \"$PGPORT\" -U \"$PGUSER\" -d \"$PGDATABASE\" -f \"/work/$DUMP_FILE\"; pg_restore --list \"/work/$DUMP_FILE\" >/dev/null; printf '%s' \"$DUMP_FILE\" > /work/dump-name.txt; cat > /work/restore-info.txt <<EOF\ninstance=${var.name}\ntype=postgresql-logical\nnamespace=${local.namespace}\ncluster=${local.cluster_name}\ndatabase=${local.app_database}\ncreated_at=$TS\nEOF"
+              ]
+
+              env {
+                name  = "PGHOST"
+                value = local.rw_host
+              }
+
+              env {
+                name  = "PGPORT"
+                value = "5432"
+              }
+
+              env {
+                name  = "PGDATABASE"
+                value = local.app_database
+              }
+
+              env {
+                name = "PGUSER"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.app.metadata[0].name
+                    key  = "username"
+                  }
+                }
+              }
+
+              env {
+                name = "PGPASSWORD"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.app.metadata[0].name
+                    key  = "password"
+                  }
+                }
+              }
+
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+            }
+
+            container {
+              name              = "upload-backup"
+              image             = "quay.io/minio/mc:latest"
+              image_pull_policy = "IfNotPresent"
+              command = [
+                "sh",
+                "-c",
+                "set -eu; DUMP_FILE=$(cat /work/dump-name.txt); mc alias set target \"$S3_ENDPOINT\" \"$S3_ACCESS_KEY\" \"$S3_SECRET_KEY\" --api S3v4 --path on; mc cp \"/work/$DUMP_FILE\" \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE\"; mc cp /work/restore-info.txt \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE.restore-info.txt\""
+              ]
+
+              env {
+                name  = "S3_ENDPOINT"
+                value = var.s3_endpoint_url
+              }
+
+              env {
+                name = "S3_ACCESS_KEY"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.s3.metadata[0].name
+                    key  = "ACCESS_KEY_ID"
+                  }
+                }
+              }
+
+              env {
+                name = "S3_SECRET_KEY"
+                value_from {
+                  secret_key_ref {
+                    name = kubernetes_secret.s3.metadata[0].name
+                    key  = "ACCESS_SECRET_KEY"
+                  }
+                }
+              }
+
+              env {
+                name  = "DUMP_BUCKET"
+                value = local.dump_bucket
+              }
+
+              volume_mount {
+                name       = "work"
+                mount_path = "/work"
+              }
+            }
+
+            volume {
+              name = "work"
+              empty_dir {}
+            }
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    kubernetes_job_v1.object_store_bootstrap
+  ]
 }
 
 resource "helm_release" "cluster" {

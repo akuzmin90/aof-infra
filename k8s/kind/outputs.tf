@@ -25,8 +25,13 @@ output "local_frontend_bucket" {
 }
 
 output "postgres_jdbc_url" {
-  description = "JDBC URL for aof-back inside the local Kubernetes cluster."
+  description = "PgBouncer JDBC URL for aof-back inside the local Kubernetes cluster."
   value       = module.postgresql_cluster.jdbc_url
+}
+
+output "postgres_direct_jdbc_url" {
+  description = "Direct read-write PostgreSQL JDBC URL for admin/maintenance jobs."
+  value       = module.postgresql_cluster.direct_jdbc_url
 }
 
 output "postgres_username" {

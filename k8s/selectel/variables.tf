@@ -4,6 +4,27 @@ variable "kubeconfig_path" {
   default     = "../../cloud/selectel/kubeconfig.yaml"
 }
 
+variable "selectel_domain_name" {
+  description = "Selectel account ID."
+  type        = string
+}
+
+variable "selectel_username" {
+  description = "Selectel service user name."
+  type        = string
+}
+
+variable "selectel_password" {
+  description = "Selectel service user password."
+  type        = string
+  sensitive   = true
+}
+
+variable "selectel_project_id" {
+  description = "Selectel project ID where object storage credentials are created."
+  type        = string
+}
+
 variable "postgres_s3_endpoint_url" {
   description = "Selectel S3-compatible endpoint for PostgreSQL backups and dumps."
   type        = string
@@ -108,4 +129,60 @@ variable "registry_password" {
   description = "Container registry password/token."
   type        = string
   sensitive   = true
+}
+
+variable "public_sites_enabled" {
+  description = "Deploy the public legacy website instances."
+  type        = bool
+  default     = false
+}
+
+variable "public_sites_tls_enabled" {
+  description = "Enable cert-manager TLS for public site ingresses after DNS points to the cluster."
+  type        = bool
+  default     = false
+}
+
+variable "public_sites_backup_s3_access_key" {
+  description = "S3 access key used for public sites backups."
+  type        = string
+  sensitive   = true
+}
+
+variable "public_sites_backup_s3_secret_key" {
+  description = "S3 secret key used for public sites backups."
+  type        = string
+  sensitive   = true
+}
+
+variable "observability_s3_access_key" {
+  description = "Optional S3 access key used by Loki for observability logs. Defaults to postgres_s3_access_key when null."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "observability_s3_secret_key" {
+  description = "Optional S3 secret key used by Loki for observability logs. Defaults to postgres_s3_secret_key when null."
+  type        = string
+  default     = null
+  sensitive   = true
+}
+
+variable "observability_loki_s3_endpoint_url" {
+  description = "Selectel S3-compatible endpoint used by Loki."
+  type        = string
+  default     = "https://s3.ru-7.storage.selcloud.ru"
+}
+
+variable "observability_loki_s3_region" {
+  description = "S3 region used by Loki."
+  type        = string
+  default     = "ru-7"
+}
+
+variable "observability_loki_s3_bucket" {
+  description = "S3 bucket used by Loki for durable log storage. The bucket is owned by cloud/selectel."
+  type        = string
+  default     = "hitmakers-loki-logs"
 }

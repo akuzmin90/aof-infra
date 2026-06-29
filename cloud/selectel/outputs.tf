@@ -77,3 +77,18 @@ output "frontend_s3_buckets" {
     for instance, bucket in openstack_objectstorage_container_v1.frontend_instance : instance => bucket.name
   }
 }
+
+output "observability_loki_s3_endpoint_url" {
+  description = "Selectel S3 endpoint used by Loki."
+  value       = "https://s3.ru-7.storage.selcloud.ru"
+}
+
+output "observability_loki_s3_region" {
+  description = "Selectel S3 region used by Loki."
+  value       = "ru-7"
+}
+
+output "observability_loki_s3_bucket" {
+  description = "S3 bucket used by Loki for durable log storage."
+  value       = openstack_objectstorage_container_v1.observability_loki_logs.name
+}
