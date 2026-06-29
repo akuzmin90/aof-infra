@@ -1,0 +1,44 @@
+loki.source.file "tomcat" {
+  targets = [
+    {
+      __path__ = "/opt/apache-tomcat-9.0.21/logs/catalina.out",
+      source   = "dedicated",
+      host     = "__HOST__",
+      env      = "__ENV__",
+      service  = "tomcat",
+    },
+  ]
+
+  forward_to = [loki.write.cluster.receiver]
+}
+
+loki.source.file "postgres" {
+  targets = [
+    {
+      __path__ = "/var/log/postgresql/*.log",
+      source   = "dedicated",
+      host     = "__HOST__",
+      env      = "__ENV__",
+      service  = "postgres",
+    },
+  ]
+
+  forward_to = [loki.write.cluster.receiver]
+
+  file_match {
+    enabled     = true
+    sync_period = "30s"
+  }
+}
+
+loki.write "cluster" {
+  endpoint {
+    url = "https://grafana.k8s.zazer.fun/loki/api/v1/push"
+
+    basic_auth {
+      username = "alloy"
+      password = "__DEDICATED_LOGS_PASSWORD__"
+    }
+  }
+}
+

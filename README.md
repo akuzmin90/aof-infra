@@ -16,6 +16,8 @@ The active production-like environment is the Selectel Kubernetes cluster in `k8
 |   |-- kind/              # Local kind cluster
 |   `-- selectel/          # Selectel Kubernetes OpenTofu root
 |-- modules/               # Reusable OpenTofu modules
+|-- ops/
+|   `-- dedicated-servers/ # Non-Kubernetes host configs and runbooks
 `-- jenkins/               # Jenkins-related files and pipeline history
 ```
 
@@ -25,6 +27,7 @@ Start here:
 - [Kubernetes operations guide](./k8s/OPERATIONS.md)
 - [Selectel Kubernetes docs](./k8s/selectel/README.md)
 - [Local kind docs](./k8s/kind/README.md)
+- [Dedicated server Alloy configs](./ops/dedicated-servers/alloy/README.md)
 
 ## Current Setup
 
@@ -173,6 +176,8 @@ Useful Grafana LogQL examples:
 ```
 
 See [observability operations](./k8s/OPERATIONS.md#observability).
+
+Dedicated server Alloy configs and install notes are stored in [ops/dedicated-servers/alloy](./ops/dedicated-servers/alloy/README.md).
 
 ## Local Kind
 
