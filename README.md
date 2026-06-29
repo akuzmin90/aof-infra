@@ -1,437 +1,201 @@
 # AOF Infrastructure
 
-This repository contains infrastructure for local development and future cloud deployment.
+This repository contains infrastructure for the AOF Kubernetes platform, CI/CD, databases, backups, public WordPress sites, and observability.
 
-The current local setup runs a production-like Kubernetes environment on Windows with kind. It is intended for testing cluster internals, Jenkins jobs, S3-style frontend hosting, PostgreSQL, and the backend Helm chart before enabling the same patterns in Selectel.
+The active production-like environment is the Selectel Kubernetes cluster in `k8s/selectel`. Local `kind` still exists for development and component testing.
 
-## Local Kind Cluster On Windows
-
-### What This Creates
-
-The local kind setup creates:
-
-- kind Kubernetes cluster named `aof`
-- kube context `kind-aof`
-- ingress-nginx on local ports `80` and `443`
-- locally trusted TLS with `mkcert`
-- Jenkins at `https://jenkins.hitmakers.ru`
-- MinIO S3-compatible storage at `https://s3.hitmakers.ru`
-- frontend gateway at `https://dev.hitmakers.ru`
-- CloudNativePG PostgreSQL cluster
-- PostgreSQL dump and restore Jenkins jobs
-- frontend Jenkins job that builds `aof-front` and uploads `dist/` to MinIO
-- backend Helm chart support from `../aof-back/chart`
-
-Argo CD may also be installed by the current kind Terraform root, but Jenkins is the active deployment path for now.
-
-### Prerequisites
-
-Install these on Windows:
-
-- Docker Desktop
-- kubectl
-- kind
-- OpenTofu
-- Helm
-- mkcert
-- Git
-
-Check from PowerShell:
-
-```powershell
-docker version
-kubectl version --client
-kind version
-tofu version
-helm version
-mkcert -version
-git --version
-```
-
-Docker Desktop must be running before creating the kind cluster.
-
-### Create The Cluster
-
-Run from the repository root:
-
-```powershell
-kind create cluster --config k8s/kind/kind-aof.yaml
-```
-
-Verify:
-
-```powershell
-kubectl config current-context
-kubectl --context kind-aof get nodes
-```
-
-Expected:
-
-- one control-plane node
-- two worker nodes
-- context `kind-aof`
-
-If you need to recreate the cluster:
-
-```powershell
-kind delete cluster --name aof
-kind create cluster --config k8s/kind/kind-aof.yaml
-```
-
-### Configure Local DNS And TLS
-
-Install the local CA:
-
-```powershell
-mkcert -install
-```
-
-Generate local certificates:
-
-```powershell
-cd k8s/kind
-New-Item -ItemType Directory -Force .local-certs
-mkcert `
-  -cert-file .local-certs/hitmakers.local.pem `
-  -key-file .local-certs/hitmakers.local-key.pem `
-  argocd.hitmakers.ru `
-  dev.hitmakers.ru `
-  jenkins.hitmakers.ru `
-  s3.hitmakers.ru
-cd ../..
-```
-
-Edit this file as Administrator:
+## Repository Map
 
 ```text
-C:\Windows\System32\drivers\etc\hosts
+.
+|-- cloud/
+|   `-- selectel/          # Selectel cloud resources outside Kubernetes
+|-- k8s/
+|   |-- README.md          # Kubernetes overview and resource model
+|   |-- OPERATIONS.md      # kubectl/debug/logs/runbook commands
+|   |-- kind/              # Local kind cluster
+|   `-- selectel/          # Selectel Kubernetes OpenTofu root
+|-- modules/               # Reusable OpenTofu modules
+`-- jenkins/               # Jenkins-related files and pipeline history
 ```
 
-Add:
+Start here:
 
-```text
-127.0.0.1 argocd.hitmakers.ru
-127.0.0.1 dev.hitmakers.ru
-127.0.0.1 jenkins.hitmakers.ru
-127.0.0.1 s3.hitmakers.ru
+- [Kubernetes overview](./k8s/README.md)
+- [Kubernetes operations guide](./k8s/OPERATIONS.md)
+- [Selectel Kubernetes docs](./k8s/selectel/README.md)
+- [Local kind docs](./k8s/kind/README.md)
+
+## Current Setup
+
+The Selectel cluster currently runs:
+
+- `aof-dev`, `aof-feature`, `aof-release` application namespaces.
+- Redis, Ignite, RabbitMQ, PostgreSQL, and frontend gateway per AOF namespace.
+- CloudNativePG PostgreSQL with physical backups, WAL archive, and logical dump CronJobs.
+- Jenkins for frontend builds, backend image builds, deployments, and manual DB dump/restore jobs.
+- `public-sites` namespace with WordPress sites for `l.zazer.mobi`, `hitmakers.games`, and `hitmakers.website`.
+- S3 backups for public sites.
+- `observability` namespace with Grafana, Loki, Alloy, and a dedicated-server log push gateway.
+- ingress-nginx and cert-manager for public HTTPS access.
+
+High-level flow:
+
+```mermaid
+flowchart TB
+  users[Users] --> ingress[ingress-nginx]
+  ingress --> aof[AOF dev / feature / release]
+  ingress --> wp[public-sites WordPress]
+  ingress --> grafana[Grafana]
+  ingress --> jenkins[Jenkins]
+
+  jenkins --> builds[Build and deploy]
+  builds --> aof
+  aof --> pg[CloudNativePG PostgreSQL]
+  pg --> pgS3[PostgreSQL S3 backups and dumps]
+  wp --> wpS3[Public sites S3 backups]
+
+  pods[Kubernetes pod logs] --> alloy[Alloy]
+  dedicated[Dedicated servers] --> gateway[Alloy gateway]
+  alloy --> loki[Loki]
+  gateway --> loki
+  loki --> lokiS3[Loki S3 storage]
+  grafana --> loki
 ```
 
-Ports `80` and `443` must be free on Windows. If kind cannot start ingress, check IIS, local nginx, other proxies, or another kind cluster.
+## Main Commands
 
-### Install Cluster Infrastructure
-
-The kind Terraform root uses local state:
-
-```hcl
-backend "local" {
-  path = "terraform.tfstate"
-}
-```
-
-Apply it:
+Selectel Kubernetes:
 
 ```powershell
-cd k8s/kind
-tofu init
+cd k8s/selectel
+tofu init -backend-config=secret.backend.tfvars
+tofu plan
 tofu apply
-cd ../..
 ```
 
-Check the main namespaces:
+Cluster inspection:
 
 ```powershell
-kubectl --context kind-aof get ns
-kubectl --context kind-aof -n ingress-nginx get pods
-kubectl --context kind-aof -n jenkins get pods
-kubectl --context kind-aof -n minio get pods
-kubectl --context kind-aof -n database get pods
+kubectl get nodes -o wide
+kubectl get pods -A
+kubectl get ingress -A
+kubectl get certificate -A
 ```
 
-### Access Jenkins
-
-Get the admin password:
+Useful outputs:
 
 ```powershell
-cd k8s/kind
+cd k8s/selectel
+tofu output
+tofu output -raw grafana_admin_password
 tofu output -raw jenkins_admin_password
-cd ../..
+tofu output -raw dedicated_logs_basic_auth_password
 ```
 
-Open:
+Do not paste sensitive outputs into shared chats or tickets.
+
+## Important Namespaces
+
+| Namespace | Purpose |
+| --- | --- |
+| `aof-dev` | Dev AOF stand |
+| `aof-feature` | Feature AOF stand |
+| `aof-release` | Release AOF stand |
+| `public-sites` | Legacy public WordPress sites |
+| `observability` | Grafana, Loki, Alloy |
+| `jenkins` | CI/CD |
+| `ingress-nginx` | Public ingress controller |
+| `cert-manager` | TLS certificate automation |
+| `cnpg-system` | CloudNativePG operator |
+
+## Public Hosts
+
+Current important hosts:
+
+- `dev.k8s.zazer.fun`
+- `feature.k8s.zazer.fun`
+- `release.k8s.zazer.fun`
+- `grafana.k8s.zazer.fun`
+- Jenkins host from `k8s/selectel` variables
+- `l.zazer.mobi`
+- `hitmakers.games`
+- `hitmakers.website`
+
+## Backups
+
+PostgreSQL has two backup forms:
+
+- physical CloudNativePG backups and WAL archive for cluster recovery;
+- logical `pg_dump -Fc` dumps for manual restore/debug workflows.
+
+Public WordPress sites have daily S3 backups at `03:00 Europe/Moscow`.
+
+Loki stores logs in S3 and Grafana reads them through the Loki datasource.
+
+See:
+
+- [PostgreSQL operations](./k8s/OPERATIONS.md#postgresql)
+- [PostgreSQL backups](./k8s/OPERATIONS.md#postgresql-backups)
+- [Public sites operations](./k8s/OPERATIONS.md#public-sites)
+- [Selectel backup details](./k8s/selectel/README.md#postgresql-backups)
+
+## Observability
+
+Grafana is available at:
 
 ```text
-https://jenkins.hitmakers.ru
+https://grafana.k8s.zazer.fun
 ```
 
-Login:
+Kubernetes pod logs are collected by Alloy DaemonSet. Dedicated servers push logs to:
 
 ```text
-username: admin
-password: output from tofu
+https://grafana.k8s.zazer.fun/loki/api/v1/push
 ```
 
-The local Jenkins module creates jobs including:
-
-- `aof-front-local-s3`
-- `aof-back-local-k8s`
-- `aof-db-dump-manual`
-- `aof-db-restore-dev`
-
-### Configure GitHub Credentials In Jenkins
-
-Create Jenkins credentials for GitHub:
-
-```text
-Kind: Username with password
-Username: x-access-token
-Password: GitHub token
-ID: github-aof-token
-```
-
-Use this credential ID in frontend/backend jobs when cloning private repositories.
-
-Do not put GitHub tokens directly in Git URLs.
-
-### Access MinIO
-
-Open:
-
-```text
-https://s3.hitmakers.ru
-```
-
-Login:
-
-```text
-username: minioadmin
-password: minioadmin123
-```
-
-Important local buckets:
-
-- `aof-front`
-- `aof-postgres-backups`
-- `aof-postgres-dumps`
-
-### Deploy Frontend To Local S3
-
-The frontend flow is:
-
-```text
-Jenkins -> build aof-front -> upload dist/ to MinIO -> frontend gateway -> https://dev.hitmakers.ru
-```
-
-Run Jenkins job:
-
-```text
-aof-front-local-s3
-```
-
-Typical parameters:
-
-```text
-BRANCH=master
-GIT_CREDENTIALS_ID=github-aof-token
-BUILD_COMMAND=npm run build
-```
-
-After the job succeeds, open:
-
-```text
-https://dev.hitmakers.ru
-```
-
-### Local PostgreSQL
-
-PostgreSQL is managed by CloudNativePG in namespace `database`.
-
-Check it:
+Credentials for dedicated Alloy agents:
 
 ```powershell
-kubectl --context kind-aof -n database get pods,svc,cluster,database,scheduledbackup,backup,pooler
+cd k8s/selectel
+tofu output -raw dedicated_logs_basic_auth_username
+tofu output -raw dedicated_logs_basic_auth_password
 ```
 
-Useful connection values:
+Useful Grafana LogQL examples:
 
-```powershell
-cd k8s/kind
-tofu output postgres_jdbc_url
-tofu output postgres_direct_jdbc_url
-tofu output postgres_username
-tofu output -raw postgres_password
-cd ../..
+```logql
+{namespace="aof-feature"}
+{namespace="aof-release", app="aof-back"}
+{source="dedicated", host="kayra", env="feature"}
+{source="dedicated", env="prod"}
+{namespace=~"aof-dev|aof-feature|aof-release"} |~ "(?i)(error|exception|failed|fatal|timeout)"
 ```
 
-The backend uses the PgBouncer JDBC URL from `postgres_jdbc_url`:
+See [observability operations](./k8s/OPERATIONS.md#observability).
 
-```text
-jdbc:postgresql://aof-db-pooler-rw.database.svc.cluster.local:5432/aof?prepareThreshold=0
-```
+## Local Kind
 
-Use `postgres_direct_jdbc_url` only for admin and maintenance jobs that intentionally bypass PgBouncer.
+The local kind setup is still useful for testing cluster internals without touching Selectel.
 
-Manual logical dumps and dev restores are handled by Jenkins jobs:
+It can run:
 
-- `aof-db-dump-manual`
-- `aof-db-restore-dev`
+- ingress-nginx;
+- cert-manager;
+- Jenkins;
+- local S3-compatible MinIO;
+- local frontend gateway;
+- CloudNativePG;
+- backend chart experiments.
 
-### Deploy Backend Locally
+See [k8s/kind/README.md](./k8s/kind/README.md).
 
-The backend app repo must exist next to this repo:
+## Working Rules
 
-```text
-../aof-back
-```
-
-Build the image from the infra repo root:
-
-```powershell
-docker build -t aof-back:local ..\aof-back
-```
-
-Load it into kind:
-
-```powershell
-kind load docker-image aof-back:local --name aof
-```
-
-Deploy with Helm:
-
-```powershell
-cd k8s/kind
-$pgPassword = tofu output -raw postgres_password
-helm upgrade --install aof-back ..\..\..\aof-back\chart `
-  --namespace aof `
-  --create-namespace `
-  --set image.repository=aof-back `
-  --set image.tag=local `
-  --set image.pullPolicy=Never `
-  --set-string database.password=$pgPassword `
-  --set ingress.enabled=true
-cd ../..
-```
-
-The chart deploys:
-
-- `aof-back` Deployment, one replica by default
-- `aof-back` Service on port `8888`
-- optional ingress path `/api` on `dev.hitmakers.ru`
-- local single-node Ignite service used by the backend cache
-
-Verify:
-
-```powershell
-kubectl --context kind-aof -n aof get pods,svc,ingress
-curl.exe -k -i https://dev.hitmakers.ru/api/
-```
-
-Expected API result for unauthenticated access:
-
-```text
-HTTP/1.1 401
-```
-
-That means the backend is reachable and security is rejecting anonymous API access.
-
-### Backend Jenkins Job
-
-The job is:
-
-```text
-aof-back-local-k8s
-```
-
-It is designed for the production-shaped flow:
-
-```text
-checkout aof-back -> build image -> push image to registry -> helm upgrade --install
-```
-
-For real Jenkins backend deployment, provide:
-
-```text
-GIT_CREDENTIALS_ID=github-aof-token
-REGISTRY_SERVER=<registry host>
-REGISTRY_CREDENTIALS_ID=<Jenkins registry credentials>
-IMAGE_REPOSITORY=<full image repo, for example cr.selcloud.ru/aof-registry/aof-back>
-```
-
-For pure local kind testing without a registry, use the manual `docker build` and `kind load docker-image` flow above.
-
-### Verify End To End
-
-Check infrastructure:
-
-```powershell
-kubectl --context kind-aof -n ingress-nginx get pods
-kubectl --context kind-aof -n jenkins get pods
-kubectl --context kind-aof -n minio get pods
-kubectl --context kind-aof -n database get pods
-kubectl --context kind-aof -n aof get pods
-```
-
-Check browser URLs:
-
-```text
-https://jenkins.hitmakers.ru
-https://s3.hitmakers.ru
-https://dev.hitmakers.ru
-```
-
-Check backend ingress:
-
-```powershell
-curl.exe -k -i https://dev.hitmakers.ru/api/
-```
-
-Expected:
-
-```text
-HTTP/1.1 401
-```
-
-### Troubleshooting
-
-If `tofu apply` cannot create ingresses or the kind cluster cannot start, check that Windows ports `80` and `443` are free.
-
-If browsers do not trust local TLS, rerun:
-
-```powershell
-mkcert -install
-```
-
-Then regenerate certs in `k8s/kind/.local-certs` and rerun:
-
-```powershell
-cd k8s/kind
-tofu apply
-cd ../..
-```
-
-If `dev.hitmakers.ru`, `jenkins.hitmakers.ru`, or `s3.hitmakers.ru` do not resolve, re-check the Windows hosts file.
-
-If `aof-back` is stuck on Liquibase lock after interrupted startup:
-
-```powershell
-kubectl --context kind-aof -n aof scale deployment/aof-back --replicas=0
-$encoded = kubectl --context kind-aof -n database get secret aof-db-app -o jsonpath='{.data.password}'
-$pgPassword = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($encoded))
-kubectl --context kind-aof -n database exec aof-db-1 -- env PGPASSWORD=$pgPassword psql -h aof-db-rw.database.svc.cluster.local -U aof -d aof -c "UPDATE databasechangeloglock SET locked=false, lockgranted=NULL, lockedby=NULL WHERE id=1;"
-kubectl --context kind-aof -n aof scale deployment/aof-back --replicas=1
-```
-
-If `aof-back` returns `401` on `/api/`, that is expected for anonymous requests.
-
-### Delete Local Cluster
-
-```powershell
-kind delete cluster --name aof
-```
-
-Local Terraform state lives in:
-
-```text
-k8s/kind/terraform.tfstate
-```
-
-Do not commit local state files.
+- Treat OpenTofu as the source of truth for long-lived resources.
+- Prefer `tofu plan` before changes and review destroys carefully.
+- Manual `kubectl patch/edit/delete` can create drift; use it only for incident response or short-lived debugging.
+- Never commit state files, kubeconfigs, credentials, or generated secrets.
+- Keep Selectel-specific cloud resources under `cloud/selectel`.
+- Keep Kubernetes cluster composition under `k8s/selectel`.
+- Keep reusable logic in `modules`.
