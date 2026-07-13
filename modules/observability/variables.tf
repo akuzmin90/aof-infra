@@ -47,6 +47,12 @@ variable "log_namespaces" {
   ]
 }
 
+variable "loki_retention_period" {
+  description = "How long Loki keeps logs before compactor retention deletes them."
+  type        = string
+  default     = "720h"
+}
+
 variable "grafana_public_url" {
   description = "Optional external URL where Grafana is served."
   type        = string

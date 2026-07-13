@@ -59,6 +59,10 @@ resource "kubernetes_deployment" "frontend" {
         labels = {
           app = var.name
         }
+
+        annotations = {
+          "checksum/server.py" = filesha256("${path.module}/server.py")
+        }
       }
 
       spec {

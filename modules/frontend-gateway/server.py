@@ -98,11 +98,12 @@ def fetch(key):
 
 
 class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
+    def serve_path(self, send_body):
         if self.path == "/nginx-health":
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"ok\n")
+            if send_body:
+                self.wfile.write(b"ok\n")
             return
 
         key = normalize_key(self.path)
@@ -114,7 +115,8 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_response(err.code)
                 self.end_headers()
-                self.wfile.write(err.read())
+                if send_body:
+                    self.wfile.write(err.read())
                 return
 
         with response:
@@ -123,7 +125,14 @@ class Handler(BaseHTTPRequestHandler):
                 if header.lower() not in SKIP_HEADERS:
                     self.send_header(header, value)
             self.end_headers()
-            self.wfile.write(response.read())
+            if send_body:
+                self.wfile.write(response.read())
+
+    def do_GET(self):
+        self.serve_path(send_body=True)
+
+    def do_HEAD(self):
+        self.serve_path(send_body=False)
 
     def log_message(self, fmt, *args):
         print("%s - %s" % (self.address_string(), fmt % args), flush=True)

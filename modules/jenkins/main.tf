@@ -10,9 +10,9 @@ locals {
     release = "release"
   }
   backend_default_git_branches = {
-    dev     = "feat/containerization"
-    feature = "feat/containerization"
-    release = "feat/containerization"
+    dev     = "develop"
+    feature = "develop"
+    release = "develop"
   }
   frontend_git_branch_map_entries = join(", ", [
     for instance, branch in local.frontend_default_git_branches : "'${instance}': '${branch}'"
@@ -25,6 +25,9 @@ locals {
     pipelineJob('${var.frontend_job_name}') {
       description('${var.frontend_job_description}')
       keepDependencies(false)
+      properties {
+        disableConcurrentBuilds()
+      }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Frontend instance and S3 bucket to deploy.')
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
@@ -43,9 +46,23 @@ locals {
             apiVersion: v1
             kind: Pod
             spec:
+              nodeSelector:
+                workload: database
+              tolerations:
+                - key: dedicated
+                  operator: Equal
+                  value: database
+                  effect: NoSchedule
               containers:
                 - name: jnlp
                   image: jenkins/inbound-agent:latest-jdk21
+                  resources:
+                    requests:
+                      cpu: 50m
+                      memory: 256Mi
+                    limits:
+                      cpu: "500m"
+                      memory: 512Mi
                 - name: node
                   image: node:18-bookworm
                   command:
@@ -53,14 +70,14 @@ locals {
                   tty: true
                   env:
                     - name: NODE_OPTIONS
-                      value: --max-old-space-size=3072
+                      value: --max-old-space-size=6144
                   resources:
                     requests:
-                      cpu: 100m
-                      memory: 3Gi
+                      cpu: 250m
+                      memory: 6Gi
                     limits:
                       cpu: "2"
-                      memory: 4Gi
+                      memory: 8Gi
                 - name: mc
                   image: quay.io/minio/mc:latest
                   command:
@@ -79,6 +96,13 @@ locals {
                         secretKeyRef:
                           name: ${local.frontend_s3_secret_name}
                           key: secret-key
+                  resources:
+                    requests:
+                      cpu: 10m
+                      memory: 64Mi
+                    limits:
+                      cpu: "250m"
+                      memory: 256Mi
             """) {
               node(POD_LABEL) {
                 def bucket = frontendBuckets[params.INSTANCE]

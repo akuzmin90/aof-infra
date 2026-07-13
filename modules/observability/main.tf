@@ -541,7 +541,8 @@ resource "helm_release" "loki" {
         }
 
         limits_config = {
-          retention_period = "168h"
+          reject_old_samples_max_age = var.loki_retention_period
+          retention_period           = var.loki_retention_period
         }
 
         compactor = {
