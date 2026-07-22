@@ -89,6 +89,18 @@ variable "app_domain_suffix" {
   default     = "k8s.zazer.fun"
 }
 
+variable "legacy_app_domain_suffix" {
+  description = "Legacy Kayra domain added to application ingresses for DNS cutover."
+  type        = string
+  default     = "zazer.fun"
+}
+
+variable "legacy_runtime_services_enabled" {
+  description = "Keep Redis, Ignite, RabbitMQ, and PgBouncer during the staged migration from the old Kubernetes backend image."
+  type        = bool
+  default     = false
+}
+
 variable "jenkins_host" {
   description = "Jenkins ingress host."
   type        = string

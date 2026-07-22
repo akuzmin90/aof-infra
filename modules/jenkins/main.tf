@@ -1,6 +1,17 @@
 locals {
   frontend_s3_secret_name = "aof-frontend-s3"
   registry_secret_name    = "aof-registry-push"
+  backend_chart_name      = "aof-back-helm-chart"
+  backend_chart_dir       = "${path.module}/charts/aof-back"
+  backend_chart_files     = fileset(local.backend_chart_dir, "**")
+  backend_chart_data = {
+    for chart_file in local.backend_chart_files :
+    replace(chart_file, "/", "__") => file("${local.backend_chart_dir}/${chart_file}")
+  }
+  backend_chart_volume_items = join("\n", [
+    for chart_file in local.backend_chart_files :
+    "                    - key: ${replace(chart_file, "/", "__")}\n                      path: ${chart_file}"
+  ])
   frontend_bucket_map_entries = join(", ", [
     for instance, bucket in var.frontend_s3_buckets : "'${instance}': '${bucket}'"
   ])
@@ -42,7 +53,7 @@ locals {
             def frontendBuckets = [${local.frontend_bucket_map_entries}]
             def defaultGitBranches = [${local.frontend_git_branch_map_entries}]
 
-            podTemplate(yaml: """
+            podTemplate(serviceAccount: 'jenkins', yaml: """
             apiVersion: v1
             kind: Pod
             spec:
@@ -136,7 +147,7 @@ locals {
                 stage('Upload') {
                   container('mc') {
                     withEnv(['S3_BUCKET=' + bucket]) {
-                      sh 'set -eu; mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc mb --ignore-existing "target/$S3_BUCKET"; mc mirror --overwrite --remove --attr "x-amz-acl=public-read" dist "target/$S3_BUCKET"; mc anonymous set download "target/$S3_BUCKET" || true; echo "Uploaded frontend to s3://$S3_BUCKET/"'
+                      sh 'set -eu; mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc mb --ignore-existing "target/$S3_BUCKET"; mc mirror --overwrite --exclude "index.html" --attr "x-amz-acl=public-read" dist "target/$S3_BUCKET"; mc cp --attr "x-amz-acl=public-read" dist/index.html "target/$S3_BUCKET/index.html"; mc anonymous set download "target/$S3_BUCKET" || true; echo "Uploaded frontend to s3://$S3_BUCKET/"'
                     }
                   }
                 }
@@ -157,6 +168,7 @@ locals {
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
         stringParam('GIT_CREDENTIALS_ID', 'github-aof-token', 'Jenkins credential ID for private Git repositories.')
         stringParam('IMAGE_TAG', '', 'Optional image tag. Empty means BRANCH-build_number.')
+        stringParam('JAVA_VERSION', '17', 'Java major version used by the backend Docker build.')
       }
       definition {
         cps {
@@ -169,6 +181,13 @@ locals {
             apiVersion: v1
             kind: Pod
             spec:
+              nodeSelector:
+                workload: database
+              tolerations:
+                - key: dedicated
+                  operator: Equal
+                  value: database
+                  effect: NoSchedule
               containers:
                 - name: jnlp
                   image: jenkins/inbound-agent:latest-jdk21
@@ -201,14 +220,23 @@ locals {
                   command:
                     - cat
                   tty: true
+                  volumeMounts:
+                    - name: backend-chart
+                      mountPath: /charts/aof-back
+                      readOnly: true
               volumes:
                 - name: kaniko-docker-config
                   emptyDir: {}
+                - name: backend-chart
+                  configMap:
+                    name: ${local.backend_chart_name}
+                    items:
+${local.backend_chart_volume_items}
             """) {
               node(POD_LABEL) {
                 def imageTag = params.IMAGE_TAG?.trim()
                 if (!imageTag) {
-                  imageTag = "$${params.INSTANCE}-$${env.BUILD_NUMBER}".replaceAll('[^A-Za-z0-9_.-]', '-')
+                  imageTag = (params.INSTANCE + '-' + env.BUILD_NUMBER).replaceAll('[^A-Za-z0-9_.-]', '-')
                 }
 
                 def gitBranch = params.GIT_BRANCH?.trim()
@@ -216,11 +244,19 @@ locals {
                   gitBranch = defaultGitBranches[params.INSTANCE] ?: params.INSTANCE
                 }
 
-                def namespace = "aof-$${params.INSTANCE}"
-                def host = "$${params.INSTANCE}.${var.app_domain_suffix}"
-                def dbCluster = "aof-$${params.INSTANCE}-db"
+                def javaVersion = params.JAVA_VERSION?.trim()
+                if (!javaVersion) {
+                  javaVersion = '17'
+                }
 
-                currentBuild.displayName = "#$${env.BUILD_NUMBER} $${params.INSTANCE} $${gitBranch} $${imageTag}"
+                def namespace = 'aof-' + params.INSTANCE
+                def host = params.INSTANCE + '.${var.app_domain_suffix}'
+                def legacyHost = params.INSTANCE + '.${var.legacy_app_domain_suffix}'
+                def dbCluster = 'aof-' + params.INSTANCE + '-db'
+                def tlsSecret = params.INSTANCE + '-k8s-zazer-fun-tls'
+                def legacyTlsSecret = params.INSTANCE + '-zazer-fun-tls'
+
+                currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + params.INSTANCE + ' ' + gitBranch + ' ' + imageTag
 
                 stage('Checkout') {
                   def checkoutConfig = [branch: gitBranch, url: backRepo]
@@ -236,10 +272,17 @@ locals {
                   container('kaniko') {
                     withEnv([
                       "IMAGE_REPOSITORY=${var.backend_image_repository}",
-                      "IMAGE_TAG=$${imageTag}"
+                      "IMAGE_TAG=" + imageTag,
+                      "JAVA_VERSION=" + javaVersion
                     ]) {
-                      sh 'set -eu; AUTH=$(printf "%s:%s" "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 | tr -d "\\n"); printf "%s\\n" "{" "  \\"auths\\": {" "    \\"$REGISTRY_SERVER\\": {" "      \\"auth\\": \\"$AUTH\\"" "    }" "  }" "}" > /kaniko/.docker/config.json'
-                      sh 'set -eu; /kaniko/executor --context "$WORKSPACE" --dockerfile "$WORKSPACE/Dockerfile" --destination "$IMAGE_REPOSITORY:$IMAGE_TAG" --cache=true'
+                      sh '''
+                        set -eu
+                        AUTH=$(printf "%s:%s" "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 | tr -d "\\n")
+                        cat > /kaniko/.docker/config.json <<EOF
+{"auths":{"$REGISTRY_SERVER":{"auth":"$AUTH"}}}
+EOF
+                      '''
+                      sh 'set -eu; /kaniko/executor --context "$WORKSPACE" --dockerfile "$WORKSPACE/Dockerfile" --destination "$IMAGE_REPOSITORY:$IMAGE_TAG" --build-arg "JAVA_VERSION=$JAVA_VERSION" --cache=true'
                     }
                   }
                 }
@@ -248,25 +291,22 @@ locals {
                   container('helm') {
                     withEnv([
                       "IMAGE_REPOSITORY=${var.backend_image_repository}",
-                      "IMAGE_TAG=$${imageTag}",
-                      "NAMESPACE=$${namespace}",
-                      "HOST=$${host}",
-                      "DB_CLUSTER=$${dbCluster}",
-                      "TLS_SECRET=$${params.INSTANCE}-k8s-zazer-fun-tls"
+                      "IMAGE_TAG=" + imageTag,
+                      "NAMESPACE=" + namespace,
+                      "HOST=" + host,
+                      "LEGACY_HOST=" + legacyHost,
+                      "DB_CLUSTER=" + dbCluster,
+                      "TLS_SECRET=" + tlsSecret,
+                      "LEGACY_TLS_SECRET=" + legacyTlsSecret
                     ]) {
                       sh([
                         'set -eu',
                         'kubectl get namespace "$NAMESPACE" >/dev/null',
                         'DB_SECRET="$DB_CLUSTER-app"',
-                        'DB_USERNAME=$(kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.username}" | base64 -d)',
-                        'DB_PASSWORD=$(kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.password}" | base64 -d)',
-                        'CLIENT_ID=$(kubectl -n "$NAMESPACE" get secret aof-back-client-id -o jsonpath="{.data.secret}" 2>/dev/null | base64 -d || true)',
-                        'if [ -z "$CLIENT_ID" ]; then',
-                        '  CLIENT_ID=$(date +%s%N | sha256sum | cut -c1-32)',
-                        '  kubectl -n "$NAMESPACE" create secret generic aof-back-client-id --from-literal=secret="$CLIENT_ID"',
-                        'fi',
+                        'kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null',
                         'cat > /tmp/aof-back-values.yaml <<EOF',
                         'fullnameOverride: aof-back',
+                        'springProfile: dev',
                         'image:',
                         '  repository: $IMAGE_REPOSITORY',
                         '  tag: $IMAGE_TAG',
@@ -275,23 +315,7 @@ locals {
                         '  - name: selectel-registry',
                         'database:',
                         '  url: jdbc:postgresql://$DB_CLUSTER-rw.$NAMESPACE.svc.cluster.local:5432/aof',
-                        '  username: $DB_USERNAME',
-                        '  password: "$DB_PASSWORD"',
-                        'clientId:',
-                        '  existingSecret: aof-back-client-id',
-                        '  secretKey: secret',
-                        'redis:',
-                        '  host: redis.$NAMESPACE.svc.cluster.local',
-                        '  port: "6379"',
-                        '  password: ""',
-                        'ignite:',
-                        '  addresses: ignite.$NAMESPACE.svc.cluster.local:47500',
-                        'rabbitmq:',
-                        '  host: rabbitmq.$NAMESPACE.svc.cluster.local',
-                        '  stompPort: 61613',
-                        '  existingSecret: rabbitmq-credentials',
-                        '  usernameKey: username',
-                        '  passwordKey: password',
+                        '  existingSecret: $DB_SECRET',
                         'ingress:',
                         '  enabled: true',
                         '  className: nginx',
@@ -304,13 +328,22 @@ locals {
                         '      paths:',
                         '        - path: /api',
                         '          pathType: Prefix',
+                        '    - host: $LEGACY_HOST',
+                        '      paths:',
+                        '        - path: /api',
+                        '          pathType: Prefix',
                         '  tls:',
                         '    - secretName: $TLS_SECRET',
                         '      hosts:',
                         '        - $HOST',
+                        '    - secretName: $LEGACY_TLS_SECRET',
+                        '      hosts:',
+                        '        - $LEGACY_HOST',
                         'EOF',
-                        'helm upgrade --install aof-back chart --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml --wait --timeout 10m'
-                      ].join('\n'))
+                        'helm lint /charts/aof-back -f /tmp/aof-back-values.yaml',
+                        'helm template aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml > /tmp/aof-back-rendered.yaml',
+                        'helm upgrade --install aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml --atomic --wait --timeout 15m'
+                      ].join('\\n'))
                     }
                   }
                 }
@@ -335,15 +368,22 @@ locals {
         cps {
           sandbox(true)
           script('''
-            podTemplate(yaml: """
+            podTemplate(serviceAccount: 'jenkins', yaml: """
             apiVersion: v1
             kind: Pod
             spec:
+              nodeSelector:
+                workload: database
+              tolerations:
+                - key: dedicated
+                  operator: Equal
+                  value: database
+                  effect: NoSchedule
               containers:
                 - name: jnlp
                   image: jenkins/inbound-agent:latest-jdk21
                 - name: postgres
-                  image: postgres:16-alpine
+                  image: postgres:11
                   command:
                     - cat
                   tty: true
@@ -359,15 +399,15 @@ locals {
                   tty: true
             """) {
               node(POD_LABEL) {
-                def namespace = "aof-$${params.INSTANCE}"
-                def clusterName = "aof-$${params.INSTANCE}-db"
-                def dumpPath = "$${params.INSTANCE}/manual"
+                def namespace = 'aof-' + params.INSTANCE
+                def clusterName = 'aof-' + params.INSTANCE + '-db'
+                def dumpPath = params.INSTANCE + '/manual'
 
                 stage('Prepare Secrets') {
                   container('kubectl') {
                     withEnv([
-                      "NAMESPACE=$${namespace}",
-                      "DB_SECRET=$${clusterName}-app"
+                      "NAMESPACE=" + namespace,
+                      "DB_SECRET=" + clusterName + "-app"
                     ]) {
                       sh 'set -eu; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.username}" | base64 -d > .db-user; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.password}" | base64 -d > .db-password; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_KEY_ID}" | base64 -d > .s3-access-key; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_SECRET_KEY}" | base64 -d > .s3-secret-key'
                     }
@@ -377,12 +417,12 @@ locals {
                 stage('Dump') {
                   container('postgres') {
                     withEnv([
-                      "PGHOST=$${clusterName}-rw.$${namespace}.svc.cluster.local",
+                      "PGHOST=" + clusterName + "-rw." + namespace + ".svc.cluster.local",
                       "PGPORT=5432",
-                      "DATABASE=$${params.DATABASE}",
-                      "DUMP_NAME=$${params.DUMP_NAME}"
+                      "DATABASE=" + params.DATABASE,
+                      "DUMP_NAME=" + params.DUMP_NAME
                     ]) {
-                      sh 'set -e; export PGUSER=$(cat .db-user); export PGPASSWORD=$(cat .db-password); DATE=$(date -u +%Y%m%dT%H%M%SZ); DUMP_NAME="$${DUMP_NAME:-}"; if [ -n "$DUMP_NAME" ]; then SAFE_NAME=$(printf "%s" "$DUMP_NAME" | tr -c "A-Za-z0-9._-" "-"); DUMP_FILE="$SAFE_NAME-$DATE.dump"; else DUMP_FILE="$DATABASE-$DATE.dump"; fi; pg_dump -Fc -d "$DATABASE" -f "$DUMP_FILE"; printf "%s" "$DUMP_FILE" > dump-name.txt; ls -lh "$DUMP_FILE"'
+                      sh 'set -e; export PGUSER=$(cat .db-user); export PGPASSWORD=$(cat .db-password); DATE=$(date -u +%Y%m%dT%H%M%SZ); if [ -n "$DUMP_NAME" ]; then SAFE_NAME=$(printf "%s" "$DUMP_NAME" | tr -c "A-Za-z0-9._-" "-"); DUMP_FILE="$SAFE_NAME-$DATE.dump"; else DUMP_FILE="$DATABASE-$DATE.dump"; fi; pg_dump -Fc -d "$DATABASE" -f "$DUMP_FILE"; printf "%s" "$DUMP_FILE" > dump-name.txt; ls -lh "$DUMP_FILE"'
                     }
                   }
                 }
@@ -390,10 +430,10 @@ locals {
                 stage('Upload') {
                   container('mc') {
                     withEnv([
-                      "NAMESPACE=$${namespace}",
+                      "NAMESPACE=" + namespace,
                       "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
                       "DUMP_BUCKET=${var.postgres_dump_bucket}",
-                      "DUMP_PATH=$${dumpPath}"
+                      "DUMP_PATH=" + dumpPath
                     ]) {
                       sh 'set -eu; export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); DUMP_FILE=$(cat dump-name.txt); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc mb --ignore-existing "target/$DUMP_BUCKET"; mc cp "$DUMP_FILE" "target/$DUMP_BUCKET/$DUMP_PATH/$DUMP_FILE"; echo "Uploaded: s3://$DUMP_BUCKET/$DUMP_PATH/$DUMP_FILE"'
                     }
@@ -413,7 +453,7 @@ locals {
       keepDependencies(false)
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Deployment instance and namespace suffix.')
-        stringParam('DUMP_OBJECT', '', 'Object key inside ${var.postgres_dump_bucket}, for example feature/manual/aof-manual-20260525T120000Z.dump.')
+        stringParam('DUMP_OBJECT', '', 'Object key inside ${var.postgres_dump_bucket}, for example production/automatic/nsbackup-2026-07-17.gz or feature/manual/aof-manual-20260525T120000Z.dump.')
         stringParam('TARGET_DATABASE', 'aof', 'Database to restore into.')
         booleanParam('RESET_SCHEMA', true, 'Drop and recreate public schema before restoring.')
       }
@@ -421,15 +461,22 @@ locals {
         cps {
           sandbox(true)
           script('''
-            podTemplate(yaml: """
+            podTemplate(serviceAccount: 'jenkins', yaml: """
             apiVersion: v1
             kind: Pod
             spec:
+              nodeSelector:
+                workload: database
+              tolerations:
+                - key: dedicated
+                  operator: Equal
+                  value: database
+                  effect: NoSchedule
               containers:
                 - name: jnlp
                   image: jenkins/inbound-agent:latest-jdk21
                 - name: postgres
-                  image: postgres:16-alpine
+                  image: postgres:11
                   command:
                     - cat
                   tty: true
@@ -445,14 +492,14 @@ locals {
                   tty: true
             """) {
               node(POD_LABEL) {
-                def namespace = "aof-$${params.INSTANCE}"
-                def clusterName = "aof-$${params.INSTANCE}-db"
+                def namespace = 'aof-' + params.INSTANCE
+                def clusterName = 'aof-' + params.INSTANCE + '-db'
 
                 stage('Prepare Secrets') {
                   container('kubectl') {
                     withEnv([
-                      "NAMESPACE=$${namespace}",
-                      "DB_SECRET=$${clusterName}-app"
+                      "NAMESPACE=" + namespace,
+                      "DB_SECRET=" + clusterName + "-app"
                     ]) {
                       sh 'set -eu; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.username}" | base64 -d > .db-user; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.password}" | base64 -d > .db-password; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_KEY_ID}" | base64 -d > .s3-access-key; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_SECRET_KEY}" | base64 -d > .s3-secret-key'
                     }
@@ -464,9 +511,9 @@ locals {
                     withEnv([
                       "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
                       "DUMP_BUCKET=${var.postgres_dump_bucket}",
-                      "DUMP_OBJECT=$${params.DUMP_OBJECT}"
+                      "DUMP_OBJECT=" + params.DUMP_OBJECT
                     ]) {
-                      sh 'set -eu; test -n "$DUMP_OBJECT"; export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc cp "target/$DUMP_BUCKET/$DUMP_OBJECT" restore.dump; ls -lh restore.dump'
+                      sh 'set +x; set -eu; test -n "$DUMP_OBJECT"; case "$DUMP_OBJECT" in *.sql.gz|*.gz) echo "Compressed SQL backup will be streamed during Restore" ;; *) export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc cp "target/$DUMP_BUCKET/$DUMP_OBJECT" restore.input; ls -lh restore.input ;; esac'
                     }
                   }
                 }
@@ -474,12 +521,15 @@ locals {
                 stage('Restore') {
                   container('postgres') {
                     withEnv([
-                      "PGHOST=$${clusterName}-rw.$${namespace}.svc.cluster.local",
+                      "PGHOST=" + clusterName + "-rw." + namespace + ".svc.cluster.local",
                       "PGPORT=5432",
-                      "TARGET_DATABASE=$${params.TARGET_DATABASE}",
-                      "RESET_SCHEMA=$${params.RESET_SCHEMA}"
+                      "TARGET_DATABASE=" + params.TARGET_DATABASE,
+                      "RESET_SCHEMA=" + params.RESET_SCHEMA,
+                      "DUMP_OBJECT=" + params.DUMP_OBJECT,
+                      "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
+                      "DUMP_BUCKET=${var.postgres_dump_bucket}"
                     ]) {
-                      sh 'set -eu; export PGUSER=$(cat .db-user); export PGPASSWORD=$(cat .db-password); if [ "$RESET_SCHEMA" = "true" ]; then psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \\"$PGUSER\\";"; fi; pg_restore --no-owner --no-acl --clean --if-exists -d "$TARGET_DATABASE" restore.dump'
+                      sh 'set +x; set -eu; export PGUSER=$(cat .db-user); export PGPASSWORD=$(cat .db-password); echo "Taking pre-restore dump"; pg_dump -Fc -d "$TARGET_DATABASE" -f pre-restore.dump; restore_status=0; if [ "$RESET_SCHEMA" = "true" ]; then psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \\"$PGUSER\\";"; fi; case "$DUMP_OBJECT" in *.sql.gz|*.gz) echo "Streaming compressed SQL backup from S3 into psql"; if ! command -v mc >/dev/null 2>&1; then apt-get update >/dev/null; apt-get install -y --no-install-recommends ca-certificates curl >/dev/null; curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc; chmod +x /usr/local/bin/mc; fi; export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null; mc cat "target/$DUMP_BUCKET/$DUMP_OBJECT" | gunzip -c | psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 ;; *.sql) psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -f restore.input ;; *.dump) pg_restore --no-owner --no-acl --clean --if-exists -d "$TARGET_DATABASE" restore.input ;; *) echo "Unsupported dump format: $DUMP_OBJECT"; restore_status=2 ;; esac || restore_status=$?; if [ "$restore_status" -ne 0 ]; then echo "Restore failed with status $restore_status; rolling database schema back"; psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \\"$PGUSER\\";"; pg_restore --no-owner --no-acl --clean --if-exists -d "$TARGET_DATABASE" pre-restore.dump; exit "$restore_status"; fi'
                     }
                   }
                 }
@@ -549,6 +599,15 @@ resource "kubernetes_secret" "registry_push" {
     username = var.registry_username
     password = var.registry_password
   }
+}
+
+resource "kubernetes_config_map" "backend_chart" {
+  metadata {
+    name      = local.backend_chart_name
+    namespace = kubernetes_namespace.jenkins.metadata[0].name
+  }
+
+  data = local.backend_chart_data
 }
 
 resource "helm_release" "jenkins" {

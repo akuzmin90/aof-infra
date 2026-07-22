@@ -123,7 +123,7 @@ kubectl -n aof-feature exec -it <pod> -- sh
 Check service DNS from a temporary pod:
 
 ```powershell
-kubectl -n aof-feature run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup redis.aof-feature.svc.cluster.local
+kubectl -n aof-feature run dns-test --rm -it --image=busybox:1.36 --restart=Never -- nslookup aof-feature-db-rw.aof-feature.svc.cluster.local
 ```
 
 Check HTTP from inside the cluster:
@@ -186,7 +186,7 @@ PostgreSQL is managed by CloudNativePG. Each AOF namespace has one cluster:
 Inspect:
 
 ```powershell
-kubectl -n aof-feature get cluster,backup,scheduledbackup,pooler,pod,pvc
+kubectl -n aof-feature get cluster,backup,scheduledbackup,pod,pvc
 kubectl -n aof-feature describe cluster aof-feature-db
 kubectl -n aof-feature logs cluster/aof-feature-db --tail=100
 ```
@@ -210,8 +210,7 @@ PostgreSQL resource map:
 
 ```mermaid
 flowchart TB
-  app[aof-back pod] --> pooler[CloudNativePG pooler]
-  pooler --> rw[aof-*-db-rw Service]
+  app[aof-back pod] --> rw[aof-*-db-rw Service]
   rw --> primary[PostgreSQL primary pod]
   primary --> dataPVC[Data PVC]
   primary --> walPVC[WAL PVC]

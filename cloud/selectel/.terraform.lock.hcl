@@ -1,14 +1,6 @@
 # This file is maintained automatically by "tofu init".
 # Manual edits may be lost in future updates.
 
-provider "registry.opentofu.org/hashicorp/random" {
-  version     = "3.9.0"
-  constraints = "~> 3.7"
-  hashes = [
-    "h1:ig2s1IS9IzehorRjvVAnKIsUUj8fkgyxct1L/kswcc4=",
-  ]
-}
-
 provider "registry.opentofu.org/selectel/selectel" {
   version     = "7.1.0"
   constraints = "~> 7.1.0"

@@ -1,0 +1,101 @@
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: aof-back
+  tag: local
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+springProfile: dev
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  fsGroup: 10001
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+
+service:
+  type: ClusterIP
+  port: 8888
+
+ingress:
+  enabled: false
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+  hosts:
+    - host: dev.hitmakers.ru
+      paths:
+        - path: /api
+          pathType: Prefix
+  tls: []
+
+database:
+  url: jdbc:postgresql://postgres:5432/aof
+  username: aof
+  password: ""
+  existingSecret: ""
+  usernameKey: username
+  passwordKey: password
+
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 768Mi
+  limits:
+    cpu: "2"
+    memory: 1536Mi
+
+startupProbe:
+  httpGet:
+    path: /api/security/isPlayerExist
+    port: http
+  failureThreshold: 180
+  periodSeconds: 5
+  timeoutSeconds: 3
+
+readinessProbe:
+  httpGet:
+    path: /api/security/isPlayerExist
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 6
+
+livenessProbe:
+  httpGet:
+    path: /api/security/isPlayerExist
+    port: http
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+terminationGracePeriodSeconds: 45
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

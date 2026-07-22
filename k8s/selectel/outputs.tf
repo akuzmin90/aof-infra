@@ -73,6 +73,13 @@ output "aof_back_hosts" {
   }
 }
 
+output "aof_back_legacy_hosts" {
+  description = "Legacy Kayra hosts served by the Kubernetes application ingresses."
+  value = {
+    for name in keys(local.app_instances) : name => "${name}.${var.legacy_app_domain_suffix}"
+  }
+}
+
 output "public_sites_namespace" {
   description = "Namespace for public legacy websites."
   value       = var.public_sites_enabled ? local.public_sites_namespace : null

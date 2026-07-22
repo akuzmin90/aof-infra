@@ -1,18 +1,21 @@
 locals {
-  namespace             = var.namespace
-  cluster_name          = var.cluster_name
-  app_database          = var.app_database
-  app_user              = var.app_user
-  app_secret_name       = var.app_secret_name != "" ? var.app_secret_name : "${var.cluster_name}-app"
-  backup_bucket         = var.backup_bucket
-  dump_bucket           = var.dump_bucket
-  backup_path           = "${var.name}/physical-v2"
-  dump_path             = "${var.name}/manual"
-  automatic_dump_path   = "${var.name}/automatic"
-  rw_host               = "${local.cluster_name}-rw.${local.namespace}.svc.cluster.local"
-  ro_host               = "${local.cluster_name}-ro.${local.namespace}.svc.cluster.local"
-  s3_credentials_secret = "aof-postgres-s3"
-  dump_job_script       = <<-EOT
+  namespace              = var.namespace
+  cluster_name           = var.cluster_name
+  app_database           = var.app_database
+  app_user               = var.app_user
+  app_secret_name        = var.app_secret_name != "" ? var.app_secret_name : "${var.cluster_name}-app"
+  backup_bucket          = var.backup_bucket
+  dump_bucket            = var.dump_bucket
+  backup_path            = "${var.name}/physical-v2"
+  dump_path              = "${var.name}/manual"
+  automatic_dump_path    = "${var.name}/automatic"
+  rw_host                = "${local.cluster_name}-rw.${local.namespace}.svc.cluster.local"
+  ro_host                = "${local.cluster_name}-ro.${local.namespace}.svc.cluster.local"
+  s3_credentials_secret  = "aof-postgres-s3"
+  postgres_image         = var.postgresql_image != "" ? var.postgresql_image : "postgres:${var.postgresql_version}-alpine"
+  postgres_node_selector = try(var.postgres_affinity.nodeSelector, {})
+  postgres_tolerations   = try(var.postgres_affinity.tolerations, [])
+  dump_job_script        = <<-EOT
     pipelineJob('aof-db-${var.name}-dump-manual') {
       description('Creates a manual logical PostgreSQL dump for ${var.name} with pg_dump -Fc and uploads it to the configured S3-compatible bucket.')
       keepDependencies(false)
@@ -32,7 +35,7 @@ locals {
             spec:
               containers:
                 - name: postgres
-                  image: postgres:16-alpine
+                  image: ${local.postgres_image}
                   command:
                     - cat
                   tty: true
@@ -113,7 +116,7 @@ locals {
             spec:
               containers:
                 - name: postgres
-                  image: postgres:16-alpine
+                  image: ${local.postgres_image}
                   command:
                     - cat
                   tty: true
@@ -315,7 +318,7 @@ resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
 
             init_container {
               name              = "dump-database"
-              image             = "postgres:16-alpine"
+              image             = local.postgres_image
               image_pull_policy = "IfNotPresent"
               command = [
                 "sh",
@@ -425,7 +428,277 @@ resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
   ]
 }
 
+resource "kubernetes_config_map" "postgres_initdb" {
+  count = var.postgresql_engine == "postgres" ? 1 : 0
+
+  metadata {
+    name      = "${local.cluster_name}-initdb"
+    namespace = local.namespace
+  }
+
+  data = {
+    "01-create-restore-db.sh" = <<-EOT
+      #!/bin/sh
+      set -eu
+      psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<SQL
+      CREATE DATABASE aof_dev_restore OWNER "$POSTGRES_USER";
+      SQL
+    EOT
+  }
+}
+
+resource "kubernetes_service" "postgres_rw" {
+  count = var.postgresql_engine == "postgres" ? 1 : 0
+
+  metadata {
+    name      = "${local.cluster_name}-rw"
+    namespace = local.namespace
+
+    labels = {
+      "app.kubernetes.io/name"      = "postgresql"
+      "app.kubernetes.io/instance"  = var.name
+      "app.kubernetes.io/component" = "primary"
+      app                           = "postgresql"
+    }
+  }
+
+  spec {
+    type = "ClusterIP"
+
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = "postgresql"
+      protocol    = "TCP"
+    }
+
+    selector = {
+      "app.kubernetes.io/name"      = "postgresql"
+      "app.kubernetes.io/instance"  = var.name
+      "app.kubernetes.io/component" = "primary"
+    }
+  }
+
+  depends_on = [
+    helm_release.cluster
+  ]
+}
+
+resource "kubernetes_service" "postgres_ro" {
+  count = var.postgresql_engine == "postgres" ? 1 : 0
+
+  metadata {
+    name      = "${local.cluster_name}-ro"
+    namespace = local.namespace
+
+    labels = {
+      "app.kubernetes.io/name"      = "postgresql"
+      "app.kubernetes.io/instance"  = var.name
+      "app.kubernetes.io/component" = "primary"
+      app                           = "postgresql"
+    }
+  }
+
+  spec {
+    type = "ClusterIP"
+
+    port {
+      name        = "postgresql"
+      port        = 5432
+      target_port = "postgresql"
+      protocol    = "TCP"
+    }
+
+    selector = {
+      "app.kubernetes.io/name"      = "postgresql"
+      "app.kubernetes.io/instance"  = var.name
+      "app.kubernetes.io/component" = "primary"
+    }
+  }
+
+  depends_on = [
+    helm_release.cluster
+  ]
+}
+
+resource "kubernetes_stateful_set" "postgres" {
+  count = var.postgresql_engine == "postgres" ? 1 : 0
+
+  metadata {
+    name      = local.cluster_name
+    namespace = local.namespace
+
+    labels = {
+      "app.kubernetes.io/name"      = "postgresql"
+      "app.kubernetes.io/instance"  = var.name
+      "app.kubernetes.io/component" = "primary"
+      app                           = "postgresql"
+    }
+  }
+
+  spec {
+    replicas              = 1
+    service_name          = kubernetes_service.postgres_rw[0].metadata[0].name
+    pod_management_policy = "OrderedReady"
+
+    selector {
+      match_labels = {
+        "app.kubernetes.io/name"      = "postgresql"
+        "app.kubernetes.io/instance"  = var.name
+        "app.kubernetes.io/component" = "primary"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          "app.kubernetes.io/name"      = "postgresql"
+          "app.kubernetes.io/instance"  = var.name
+          "app.kubernetes.io/component" = "primary"
+          app                           = "postgresql"
+        }
+      }
+
+      spec {
+        node_selector = local.postgres_node_selector
+
+        dynamic "toleration" {
+          for_each = local.postgres_tolerations
+
+          content {
+            key      = lookup(toleration.value, "key", null)
+            operator = lookup(toleration.value, "operator", null)
+            value    = lookup(toleration.value, "value", null)
+            effect   = lookup(toleration.value, "effect", null)
+          }
+        }
+
+        container {
+          name              = "postgres"
+          image             = local.postgres_image
+          image_pull_policy = "IfNotPresent"
+
+          port {
+            name           = "postgresql"
+            container_port = 5432
+            protocol       = "TCP"
+          }
+
+          args = [
+            "-c",
+            "max_connections=${lookup(var.postgres_parameters, "max_connections", "500")}",
+            "-c",
+            "shared_buffers=${lookup(var.postgres_parameters, "shared_buffers", "512MB")}",
+            "-c",
+            "synchronous_commit=${lookup(var.postgres_parameters, "synchronous_commit", "off")}",
+            "-c",
+            "listen_addresses=*"
+          ]
+
+          env {
+            name  = "POSTGRES_DB"
+            value = local.app_database
+          }
+
+          env {
+            name  = "PGDATA"
+            value = "/var/lib/postgresql/data/pgdata"
+          }
+
+          env {
+            name = "POSTGRES_USER"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.app.metadata[0].name
+                key  = "username"
+              }
+            }
+          }
+
+          env {
+            name = "POSTGRES_PASSWORD"
+            value_from {
+              secret_key_ref {
+                name = kubernetes_secret.app.metadata[0].name
+                key  = "password"
+              }
+            }
+          }
+
+          readiness_probe {
+            exec {
+              command = ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            }
+            initial_delay_seconds = 5
+            period_seconds        = 10
+            timeout_seconds       = 5
+            failure_threshold     = 6
+          }
+
+          liveness_probe {
+            exec {
+              command = ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]
+            }
+            initial_delay_seconds = 30
+            period_seconds        = 20
+            timeout_seconds       = 5
+            failure_threshold     = 6
+          }
+
+          resources {
+            requests = var.postgres_resources.requests
+            limits   = var.postgres_resources.limits
+          }
+
+          volume_mount {
+            name       = "data"
+            mount_path = "/var/lib/postgresql/data"
+          }
+
+          volume_mount {
+            name       = "initdb"
+            mount_path = "/docker-entrypoint-initdb.d"
+            read_only  = true
+          }
+        }
+
+        volume {
+          name = "initdb"
+          config_map {
+            name         = kubernetes_config_map.postgres_initdb[0].metadata[0].name
+            default_mode = "0755"
+          }
+        }
+      }
+    }
+
+    volume_claim_template {
+      metadata {
+        name = "data"
+      }
+
+      spec {
+        access_modes       = ["ReadWriteOnce"]
+        storage_class_name = var.storage_class != "" ? var.storage_class : null
+
+        resources {
+          requests = {
+            storage = var.storage_size
+          }
+        }
+      }
+    }
+  }
+
+  depends_on = [
+    kubernetes_job_v1.object_store_bootstrap,
+    helm_release.cluster
+  ]
+}
+
 resource "helm_release" "cluster" {
+  count = var.postgresql_engine == "cloudnative-pg" ? 1 : 0
+
   name       = local.cluster_name
   namespace  = local.namespace
   repository = "https://cloudnative-pg.github.io/charts"
@@ -440,7 +713,7 @@ resource "helm_release" "cluster" {
       type              = "postgresql"
 
       version = {
-        postgresql = "16"
+        postgresql = var.postgresql_version
       }
 
       mode       = "standalone"
@@ -531,7 +804,7 @@ resource "helm_release" "cluster" {
         }
       ]
 
-      poolers = [
+      poolers = var.enable_pooler ? [
         {
           name       = "rw"
           type       = "rw"
@@ -539,7 +812,7 @@ resource "helm_release" "cluster" {
           instances  = var.pooler_instances
           parameters = var.pooler_parameters
         }
-      ]
+      ] : []
     })
   ]
 

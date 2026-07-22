@@ -143,9 +143,6 @@ The cluster has three application environments:
 
 Each namespace includes:
 
-- Redis;
-- Ignite;
-- RabbitMQ;
 - PostgreSQL with CloudNativePG;
 - frontend gateway;
 - registry pull secret for backend images;
@@ -160,11 +157,7 @@ flowchart TB
     frontendSvc --> frontend[frontend-gateway Deployment]
     frontend --> frontendS3[Frontend S3 bucket]
 
-    backend[aof-back Deployment from Jenkins] --> redis[Redis]
-    backend --> ignite[Ignite]
-    backend --> rabbit[RabbitMQ]
-    backend --> pgPool[CloudNativePG pooler]
-    pgPool --> pg[PostgreSQL cluster]
+    backend[aof-back Deployment from Jenkins] --> pg[PostgreSQL cluster]
     pg --> pgPVC[Data + WAL PVCs]
     pg --> pgBackups[S3 physical backups]
     pgDump[Logical dump CronJob] --> pg
@@ -172,11 +165,33 @@ flowchart TB
   end
 ```
 
+## Kayra Replacement Rollout
+
+Keep `legacy_runtime_services_enabled = true` for the first infrastructure apply. This updates Jenkins, direct PostgreSQL capacity, and dual-host ingress without stopping services used by the old backend image.
+
+Deploy and verify the current `develop` backend in `dev`, `feature`, and `release`. After all three deployments are healthy and logs contain no Redis, RabbitMQ, Ignite, or PgBouncer connection attempts, set:
+
+```hcl
+legacy_runtime_services_enabled = false
+```
+
+Review the plan and apply it to remove the unused services. The removal plan must not contain PostgreSQL clusters, PVCs, namespaces, frontend gateways, Jenkins, ingress-nginx, or observability resources.
+
+Before restoring Kayra data or switching production DNS:
+
+- size each PostgreSQL data PVC for its source database plus migration and vacuum headroom;
+- resize the application node pool for measured Kayra JVM memory, then update the chart resource requests and limits;
+- restore production-like data and complete player, WebSocket, scheduler, and load tests;
+- provision each `*-zazer-fun-tls` secret before DNS cutover, using DNS-01 or an approved transfer of the existing certificate;
+- keep Kayra available until post-cutover checks and rollback validation pass.
+
+Observed during migration planning: Kayra databases were approximately 242 GB and 285 GB, while stand PVCs were 20 GiB. Kayra's largest Tomcat process used approximately 38 GiB RSS, while the Kubernetes compute nodes exposed approximately 6 GiB each. These values must be measured again immediately before capacity changes.
+
 Inspect one environment:
 
 ```powershell
 kubectl -n aof-feature get pods,svc,ingress,pvc,secret
-kubectl -n aof-feature get cluster,backup,scheduledbackup,pooler
+kubectl -n aof-feature get cluster,backup,scheduledbackup
 ```
 
 ## PostgreSQL Backups

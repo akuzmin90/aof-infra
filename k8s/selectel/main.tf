@@ -106,6 +106,8 @@ resource "random_password" "jenkins_admin" {
 }
 
 locals {
+  app_domain_suffixes = distinct(compact([var.app_domain_suffix, var.legacy_app_domain_suffix]))
+
   app_instances = {
     dev = {
       namespace        = "aof-dev"
@@ -176,18 +178,9 @@ locals {
   }
 
   small_postgres_parameters = {
-    max_connections                     = "150"
-    shared_buffers                      = "512MB"
-    effective_cache_size                = "1536MB"
-    maintenance_work_mem                = "128MB"
-    work_mem                            = "4MB"
-    checkpoint_completion_target        = "0.9"
-    max_wal_size                        = "2GB"
-    min_wal_size                        = "512MB"
-    wal_compression                     = "on"
-    random_page_cost                    = "1.1"
-    effective_io_concurrency            = "200"
-    idle_in_transaction_session_timeout = "60000"
+    max_connections    = "500"
+    shared_buffers     = "512MB"
+    synchronous_commit = "off"
   }
 }
 
@@ -300,7 +293,7 @@ resource "kubernetes_secret" "registry_pull" {
 }
 
 module "redis" {
-  for_each = local.app_instances
+  for_each = var.legacy_runtime_services_enabled ? local.app_instances : {}
 
   source = "../../modules/redis"
 
@@ -313,7 +306,7 @@ module "redis" {
 }
 
 module "ignite" {
-  for_each = local.app_instances
+  for_each = var.legacy_runtime_services_enabled ? local.app_instances : {}
 
   source = "../../modules/ignite"
 
@@ -326,7 +319,7 @@ module "ignite" {
 }
 
 module "rabbitmq" {
-  for_each = local.app_instances
+  for_each = var.legacy_runtime_services_enabled ? local.app_instances : {}
 
   source = "../../modules/rabbitmq"
 
@@ -356,8 +349,12 @@ module "postgresql_cluster" {
 
   enable_jenkins_database_jobs = false
 
+  postgresql_engine  = "postgres"
+  postgresql_version = "11"
+  postgresql_image   = "postgres:11"
+
   cluster_instances = 1
-  storage_size      = "20Gi"
+  storage_size      = "400Gi"
   storage_class     = "fast.ru-7a"
   wal_storage_size  = "32Gi"
   wal_storage_class = "fast.ru-7a"
@@ -366,12 +363,7 @@ module "postgresql_cluster" {
   postgres_affinity   = local.database_node_affinity
   postgres_parameters = local.small_postgres_parameters
 
-  pooler_instances = 1
-  pooler_parameters = {
-    max_client_conn   = "500"
-    default_pool_size = "20"
-    reserve_pool_size = "5"
-  }
+  enable_pooler = var.legacy_runtime_services_enabled
 
   backup_retention_policy = "7d"
   backup_schedule         = "0 0 2 * * *"
@@ -591,20 +583,25 @@ resource "kubernetes_ingress_v1" "frontend" {
   spec {
     ingress_class_name = "nginx"
 
-    rule {
-      host = "${each.key}.${var.app_domain_suffix}"
+    dynamic "rule" {
+      for_each = toset(local.app_domain_suffixes)
+      iterator = domain
 
-      http {
-        path {
-          path      = "/"
-          path_type = "Prefix"
+      content {
+        host = "${each.key}.${domain.value}"
 
-          backend {
-            service {
-              name = module.frontend_gateway[each.key].service_name
+        http {
+          path {
+            path      = "/"
+            path_type = "Prefix"
 
-              port {
-                number = 8080
+            backend {
+              service {
+                name = module.frontend_gateway[each.key].service_name
+
+                port {
+                  number = 8080
+                }
               }
             }
           }
@@ -615,6 +612,11 @@ resource "kubernetes_ingress_v1" "frontend" {
     tls {
       hosts       = ["${each.key}.${var.app_domain_suffix}"]
       secret_name = "${each.key}-k8s-zazer-fun-tls"
+    }
+
+    tls {
+      hosts       = ["${each.key}.${var.legacy_app_domain_suffix}"]
+      secret_name = "${each.key}-zazer-fun-tls"
     }
   }
 }
@@ -638,6 +640,7 @@ module "jenkins" {
   backend_job_name         = "aof-back"
   backend_image_repository = var.aof_back_image_repository
   app_domain_suffix        = var.app_domain_suffix
+  legacy_app_domain_suffix = var.legacy_app_domain_suffix
   registry_server          = var.registry_server
   registry_username        = var.registry_username
   registry_password        = var.registry_password

@@ -98,6 +98,12 @@ variable "app_domain_suffix" {
   default     = "k8s.zazer.fun"
 }
 
+variable "legacy_app_domain_suffix" {
+  description = "Legacy domain served alongside the primary application domain during DNS cutover."
+  type        = string
+  default     = "zazer.fun"
+}
+
 variable "registry_server" {
   description = "Container registry server used by the backend build job."
   type        = string

@@ -24,6 +24,8 @@ frontend_s3_access_key   = "replace-with-existing-s3-access-key"
 frontend_s3_secret_key   = "replace-with-existing-s3-secret-key"
 
 app_domain_suffix               = "k8s.zazer.fun"
+legacy_app_domain_suffix        = "zazer.fun"
+legacy_runtime_services_enabled = false
 jenkins_host                    = "jenkins.k8s.zazer.fun"
 aof_back_image_repository       = "cr.selcloud.ru/aof-registry/aof-back"
 aof_back_image_tag              = "latest"

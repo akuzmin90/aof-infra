@@ -1,0 +1,6 @@
+apiVersion: v2
+name: aof-back
+description: Helm chart for the existing AOF backend runtime
+type: application
+version: 0.2.0
+appVersion: "0.0.1-SNAPSHOT"

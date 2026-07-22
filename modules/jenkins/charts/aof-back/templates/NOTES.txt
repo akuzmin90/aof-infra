@@ -1,0 +1,11 @@
+AOF backend service:
+  http://{{ include "aof-back.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+The chart runs exactly one application replica with the {{ .Values.springProfile }} Spring profile.
+{{- if .Values.ingress.enabled }}
+
+Ingress hosts:
+{{- range .Values.ingress.hosts }}
+  {{ .host }}
+{{- end }}
+{{- end }}

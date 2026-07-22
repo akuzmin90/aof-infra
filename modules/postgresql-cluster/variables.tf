@@ -96,6 +96,29 @@ variable "cluster_instances" {
   default     = 2
 }
 
+variable "postgresql_engine" {
+  description = "PostgreSQL engine implementation. Use cloudnative-pg for managed CNPG clusters or postgres for a PostgreSQL StatefulSet."
+  type        = string
+  default     = "cloudnative-pg"
+
+  validation {
+    condition     = contains(["cloudnative-pg", "postgres"], var.postgresql_engine)
+    error_message = "postgresql_engine must be either cloudnative-pg or postgres."
+  }
+}
+
+variable "postgresql_version" {
+  description = "PostgreSQL major version for the selected engine."
+  type        = string
+  default     = "16"
+}
+
+variable "postgresql_image" {
+  description = "PostgreSQL container image used by postgres mode and client jobs."
+  type        = string
+  default     = ""
+}
+
 variable "storage_size" {
   description = "PostgreSQL data volume size."
   type        = string
@@ -194,6 +217,12 @@ variable "pooler_instances" {
   description = "Number of PgBouncer read-write pooler instances."
   type        = number
   default     = 2
+}
+
+variable "enable_pooler" {
+  description = "Create the CloudNativePG PgBouncer pooler."
+  type        = bool
+  default     = true
 }
 
 variable "pooler_parameters" {
