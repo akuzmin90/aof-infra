@@ -57,6 +57,23 @@ provider "openstack" {
   region      = "ru-7"
 }
 
+resource "kubernetes_storage_class_v1" "universal2_ru_7a" {
+  metadata {
+    name = "universal2.ru-7a"
+  }
+
+  storage_provisioner = "cinder.csi.openstack.org"
+  reclaim_policy      = "Delete"
+  volume_binding_mode = "Immediate"
+
+  allow_volume_expansion = true
+
+  parameters = {
+    availability = "ru-7a"
+    type         = "universal2.ru-7a"
+  }
+}
+
 import {
   to = module.frontend_gateway["feature"].kubernetes_secret.s3
   id = "aof-feature/frontend-gateway-s3"
@@ -107,6 +124,21 @@ resource "random_password" "jenkins_admin" {
 
 locals {
   app_domain_suffixes = distinct(compact([var.app_domain_suffix, var.legacy_app_domain_suffix]))
+
+  dev_db_migration_enabled  = var.dev_db_storage_migration_stage != "disabled"
+  dev_db_new_active         = contains(["cutover", "complete"], var.dev_db_storage_migration_stage)
+  dev_db_new_running        = contains(["replicate", "cutover", "complete"], var.dev_db_storage_migration_stage)
+  dev_db_migration_complete = var.dev_db_storage_migration_stage == "complete"
+
+  feature_db_migration_enabled  = var.feature_db_storage_migration_stage != "disabled"
+  feature_db_new_active         = contains(["cutover", "complete"], var.feature_db_storage_migration_stage)
+  feature_db_new_running        = contains(["replicate", "cutover", "complete"], var.feature_db_storage_migration_stage)
+  feature_db_migration_complete = var.feature_db_storage_migration_stage == "complete"
+
+  release_db_migration_enabled  = var.release_db_storage_migration_stage != "disabled"
+  release_db_new_active         = contains(["cutover", "complete"], var.release_db_storage_migration_stage)
+  release_db_new_running        = contains(["replicate", "cutover", "complete"], var.release_db_storage_migration_stage)
+  release_db_migration_complete = var.release_db_storage_migration_stage == "complete"
 
   app_instances = {
     dev = {
@@ -359,6 +391,24 @@ module "postgresql_cluster" {
   wal_storage_size  = "32Gi"
   wal_storage_class = "fast.ru-7a"
 
+  postgres_replicas = (
+    (each.key == "dev" && local.dev_db_new_active) ||
+    (each.key == "feature" && local.feature_db_new_active) ||
+    (each.key == "release" && local.release_db_new_active)
+  ) ? 0 : 1
+  postgres_statefulset_enabled = !(
+    (each.key == "dev" && local.dev_db_migration_complete) ||
+    (each.key == "feature" && local.feature_db_migration_complete) ||
+    (each.key == "release" && local.release_db_migration_complete)
+  )
+  postgres_service_component = (
+    (each.key == "dev" && local.dev_db_new_active) ||
+    (each.key == "feature" && local.feature_db_new_active) ||
+    (each.key == "release" && local.release_db_new_active)
+    ? "universal-primary"
+    : "primary"
+  )
+
   postgres_resources  = local.small_postgres_resources
   postgres_affinity   = local.database_node_affinity
   postgres_parameters = local.small_postgres_parameters
@@ -367,6 +417,9 @@ module "postgresql_cluster" {
 
   backup_retention_policy = "7d"
   backup_schedule         = "0 0 2 * * *"
+  # Stand databases are disposable copies of production. Keep the CronJobs
+  # available for ad-hoc testing, but do not run automatic backups.
+  logical_backup_suspend = true
 
   depends_on = [
     module.cloudnative_pg_operator,

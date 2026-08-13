@@ -101,6 +101,57 @@ variable "legacy_runtime_services_enabled" {
   default     = false
 }
 
+variable "dev_db_storage_migration_stage" {
+  description = "Dev PostgreSQL Fast-to-Universal migration stage: disabled, copy, replicate, cutover, or complete."
+  type        = string
+  default     = "complete"
+
+  validation {
+    condition = contains([
+      "disabled",
+      "copy",
+      "replicate",
+      "cutover",
+      "complete",
+    ], var.dev_db_storage_migration_stage)
+    error_message = "dev_db_storage_migration_stage must be disabled, copy, replicate, cutover, or complete."
+  }
+}
+
+variable "feature_db_storage_migration_stage" {
+  description = "Feature PostgreSQL Fast-to-Universal migration stage: disabled, copy, replicate, cutover, or complete."
+  type        = string
+  default     = "complete"
+
+  validation {
+    condition = contains([
+      "disabled",
+      "copy",
+      "replicate",
+      "cutover",
+      "complete",
+    ], var.feature_db_storage_migration_stage)
+    error_message = "feature_db_storage_migration_stage must be disabled, copy, replicate, cutover, or complete."
+  }
+}
+
+variable "release_db_storage_migration_stage" {
+  description = "Release PostgreSQL Fast-to-Universal migration stage: disabled, copy, replicate, cutover, or complete."
+  type        = string
+  default     = "complete"
+
+  validation {
+    condition = contains([
+      "disabled",
+      "copy",
+      "replicate",
+      "cutover",
+      "complete",
+    ], var.release_db_storage_migration_stage)
+    error_message = "release_db_storage_migration_stage must be disabled, copy, replicate, cutover, or complete."
+  }
+}
+
 variable "jenkins_host" {
   description = "Jenkins ingress host."
   type        = string

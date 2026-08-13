@@ -83,6 +83,7 @@ Storage class used by stateful workloads:
 
 ```text
 fast.ru-7a
+universal2.ru-7a
 ```
 
 Storage usage:
@@ -104,6 +105,46 @@ flowchart LR
 ```
 
 OpenTofu state is stored in Selectel S3 with path-style addressing and validation skips required for S3-compatible storage.
+
+### Dev, feature, and release database storage migration
+
+`dev-db-storage-migration.tf`, `feature-db-storage-migration.tf`, and
+`release-db-storage-migration.tf` implement staged, rollback-preserving
+migrations from Fast volumes to 400 GiB Universal v2 volumes. Universal v2 is
+provisioned with the Selectel default of 2,000 IOPS.
+
+Use `dev_db_storage_migration_stage`,
+`feature_db_storage_migration_stage`, or
+`release_db_storage_migration_stage` for the corresponding stand:
+
+| Stage | Effect |
+| --- | --- |
+| `disabled` | No migration resources. |
+| `copy` | Creates the protected Universal PVC and runs one online `pg_basebackup`. |
+| `replicate` | Removes the completed copy Job and starts the new database as a streaming standby. |
+| `cutover` | Scales the old StatefulSet to zero and moves the stable database Services to the promoted Universal instance. |
+| `complete` | Keeps the post-cutover topology after validation. |
+
+`complete` is the repository default after each completed cutover. In this
+stage the old direct PostgreSQL StatefulSet is removed while its retention
+policy leaves the Fast PVC available for the explicit final deletion step.
+
+Before `copy`, PostgreSQL must allow the `aof` replication role from the
+cluster pod CIDR. Do not use a public or unrestricted CIDR.
+
+Before applying `cutover`:
+
+1. Scale the corresponding application to zero.
+2. Confirm the standby replay LSN equals the primary LSN.
+3. Scale the old database StatefulSet to zero and wait for it to stop.
+4. Promote the Universal standby and confirm it is writable.
+5. Apply the `cutover` stage, validate the stable Service, then restore the
+   application replica count.
+
+The old Fast PVC is deliberately retained. It is a lossless rollback point
+until application writes resume on Universal; after that, rolling back requires
+reconciling post-cutover writes. Delete the Fast PVC separately after the
+agreed validation window. Billing does not decrease while both volumes exist.
 
 Provider docs:
 
@@ -196,7 +237,12 @@ kubectl -n aof-feature get cluster,backup,scheduledbackup
 
 ## PostgreSQL Backups
 
-Each PostgreSQL cluster has:
+Automatic PostgreSQL backups are suspended for the `dev`, `feature`, and
+`release` stands because their databases are disposable copies of production.
+The logical backup CronJobs are retained and can still be triggered manually
+when backup or restore behavior needs to be tested.
+
+The PostgreSQL module supports:
 
 - physical backups and WAL archive through CloudNativePG;
 - logical `pg_dump -Fc` backups through a Kubernetes CronJob.

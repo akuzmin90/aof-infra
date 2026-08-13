@@ -55,6 +55,11 @@ output "k8s_database_nodegroup_id" {
   value       = selectel_mks_nodegroup_v1.database.id
 }
 
+output "k8s_ci_nodegroup_id" {
+  description = "Autoscaling preemptible CI node group ID."
+  value       = selectel_mks_nodegroup_v1.ci.id
+}
+
 output "k8s_kubeconfig" {
   description = "Kubeconfig for the cluster."
   value       = data.selectel_mks_kubeconfig_v1.main.raw_config

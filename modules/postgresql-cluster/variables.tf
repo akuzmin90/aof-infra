@@ -131,6 +131,29 @@ variable "storage_class" {
   default     = ""
 }
 
+variable "postgres_replicas" {
+  description = "Number of replicas for the direct PostgreSQL StatefulSet."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = contains([0, 1], var.postgres_replicas)
+    error_message = "postgres_replicas must be either 0 or 1."
+  }
+}
+
+variable "postgres_statefulset_enabled" {
+  description = "Create the direct PostgreSQL StatefulSet. Services, secrets, and backup jobs remain managed when disabled."
+  type        = bool
+  default     = true
+}
+
+variable "postgres_service_component" {
+  description = "Pod component label selected by the direct PostgreSQL read-write and read-only Services."
+  type        = string
+  default     = "primary"
+}
+
 variable "wal_storage_size" {
   description = "PostgreSQL WAL volume size."
   type        = string
@@ -211,6 +234,12 @@ variable "logical_backup_schedule" {
   description = "Kubernetes CronJob schedule for automatic logical pg_dump backups, in Europe/Moscow time."
   type        = string
   default     = "10 3 * * *"
+}
+
+variable "logical_backup_suspend" {
+  description = "Suspend automatic logical pg_dump backups without deleting the CronJob."
+  type        = bool
+  default     = false
 }
 
 variable "pooler_instances" {

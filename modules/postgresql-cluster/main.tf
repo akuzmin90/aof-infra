@@ -285,6 +285,7 @@ resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
   spec {
     schedule                      = var.logical_backup_schedule
     timezone                      = "Europe/Moscow"
+    suspend                       = var.logical_backup_suspend
     concurrency_policy            = "Forbid"
     successful_jobs_history_limit = 3
     failed_jobs_history_limit     = 3
@@ -314,16 +315,30 @@ resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
           }
 
           spec {
-            restart_policy = "Never"
+            restart_policy                   = "Never"
+            active_deadline_seconds          = 14400
+            termination_grace_period_seconds = 30
+            node_selector                    = local.postgres_node_selector
 
-            init_container {
+            dynamic "toleration" {
+              for_each = local.postgres_tolerations
+
+              content {
+                key      = lookup(toleration.value, "key", null)
+                operator = lookup(toleration.value, "operator", null)
+                value    = lookup(toleration.value, "value", null)
+                effect   = lookup(toleration.value, "effect", null)
+              }
+            }
+
+            container {
               name              = "dump-database"
               image             = local.postgres_image
               image_pull_policy = "IfNotPresent"
               command = [
                 "sh",
                 "-c",
-                "set -eu; TS=$(TZ=Europe/Moscow date +%Y%m%d-%H%M%S); DUMP_FILE=\"${local.app_database}-$TS.dump\"; pg_dump -Fc -h \"$PGHOST\" -p \"$PGPORT\" -U \"$PGUSER\" -d \"$PGDATABASE\" -f \"/work/$DUMP_FILE\"; pg_restore --list \"/work/$DUMP_FILE\" >/dev/null; printf '%s' \"$DUMP_FILE\" > /work/dump-name.txt; cat > /work/restore-info.txt <<EOF\ninstance=${var.name}\ntype=postgresql-logical\nnamespace=${local.namespace}\ncluster=${local.cluster_name}\ndatabase=${local.app_database}\ncreated_at=$TS\nEOF"
+                "set -eu; TS=$(TZ=Europe/Moscow date +%Y%m%d-%H%M%S); DUMP_FILE=\"${local.app_database}-$TS.dump\"; FIFO=/work/dump.pipe; rm -f \"$FIFO\"; mkfifo \"$FIFO\"; printf '%s' \"$DUMP_FILE\" > /work/dump-name.txt; cat > /work/restore-info.txt <<EOF\ninstance=${var.name}\ntype=postgresql-logical\nnamespace=${local.namespace}\ncluster=${local.cluster_name}\ndatabase=${local.app_database}\ncreated_at=$TS\nEOF\nwhile [ ! -f /work/uploader-ready ]; do sleep 1; done; pg_dump -Fc -Z 1 -h \"$PGHOST\" -p \"$PGPORT\" -U \"$PGUSER\" -d \"$PGDATABASE\" > \"$FIFO\""
               ]
 
               env {
@@ -374,7 +389,7 @@ resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
               command = [
                 "sh",
                 "-c",
-                "set -eu; DUMP_FILE=$(cat /work/dump-name.txt); mc alias set target \"$S3_ENDPOINT\" \"$S3_ACCESS_KEY\" \"$S3_SECRET_KEY\" --api S3v4 --path on; mc cp \"/work/$DUMP_FILE\" \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE\"; mc cp /work/restore-info.txt \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE.restore-info.txt\""
+                "set -eu; while [ ! -p /work/dump.pipe ] || [ ! -s /work/dump-name.txt ]; do sleep 1; done; DUMP_FILE=$(cat /work/dump-name.txt); mc alias set target \"$S3_ENDPOINT\" \"$S3_ACCESS_KEY\" \"$S3_SECRET_KEY\" --api S3v4 --path on; mc mb --ignore-existing \"target/$DUMP_BUCKET\"; touch /work/uploader-ready; mc pipe \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE\" < /work/dump.pipe; mc cp /work/restore-info.txt \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE.restore-info.txt\"; mc stat \"target/$DUMP_BUCKET/${local.automatic_dump_path}/$DUMP_FILE\""
               ]
 
               env {
@@ -475,7 +490,7 @@ resource "kubernetes_service" "postgres_rw" {
     selector = {
       "app.kubernetes.io/name"      = "postgresql"
       "app.kubernetes.io/instance"  = var.name
-      "app.kubernetes.io/component" = "primary"
+      "app.kubernetes.io/component" = var.postgres_service_component
     }
   }
 
@@ -512,7 +527,7 @@ resource "kubernetes_service" "postgres_ro" {
     selector = {
       "app.kubernetes.io/name"      = "postgresql"
       "app.kubernetes.io/instance"  = var.name
-      "app.kubernetes.io/component" = "primary"
+      "app.kubernetes.io/component" = var.postgres_service_component
     }
   }
 
@@ -522,7 +537,15 @@ resource "kubernetes_service" "postgres_ro" {
 }
 
 resource "kubernetes_stateful_set" "postgres" {
-  count = var.postgresql_engine == "postgres" ? 1 : 0
+  count = var.postgresql_engine == "postgres" && var.postgres_statefulset_enabled ? 1 : 0
+
+  lifecycle {
+    # Kubernetes does not allow changing a StatefulSet's existing volume claim
+    # template. Actual PVC expansion is managed on the bound claim.
+    ignore_changes = [
+      spec[0].volume_claim_template[0].spec[0].resources[0].requests["storage"],
+    ]
+  }
 
   metadata {
     name      = local.cluster_name
@@ -537,7 +560,7 @@ resource "kubernetes_stateful_set" "postgres" {
   }
 
   spec {
-    replicas              = 1
+    replicas              = var.postgres_replicas
     service_name          = kubernetes_service.postgres_rw[0].metadata[0].name
     pod_management_policy = "OrderedReady"
 

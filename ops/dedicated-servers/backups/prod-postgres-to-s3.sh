@@ -56,4 +56,3 @@ mc cp "$BACKUP_FILE" "aof-s3/$S3_BUCKET/$S3_PREFIX/$OBJECT_NAME"
 mc cp "$BACKUP_FILE" "aof-s3/$S3_BUCKET/$S3_PREFIX/latest.sql.gz"
 
 echo "DONE: s3://$S3_BUCKET/$S3_PREFIX/$OBJECT_NAME"
-

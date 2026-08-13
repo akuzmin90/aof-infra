@@ -53,16 +53,19 @@ locals {
             def frontendBuckets = [${local.frontend_bucket_map_entries}]
             def defaultGitBranches = [${local.frontend_git_branch_map_entries}]
 
-            podTemplate(serviceAccount: 'jenkins', yaml: """
+            currentBuild.description = 'Waiting for autoscaled CI capacity'
+            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+
+            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
             apiVersion: v1
             kind: Pod
             spec:
               nodeSelector:
-                workload: database
+                workload: ci
               tolerations:
                 - key: dedicated
                   operator: Equal
-                  value: database
+                  value: ci
                   effect: NoSchedule
               containers:
                 - name: jnlp
@@ -70,7 +73,7 @@ locals {
                   resources:
                     requests:
                       cpu: 50m
-                      memory: 256Mi
+                      memory: 128Mi
                     limits:
                       cpu: "500m"
                       memory: 512Mi
@@ -81,14 +84,16 @@ locals {
                   tty: true
                   env:
                     - name: NODE_OPTIONS
-                      value: --max-old-space-size=6144
+                      value: --max-old-space-size=4096
                   resources:
                     requests:
                       cpu: 250m
-                      memory: 6Gi
+                      memory: 4Gi
+                      ephemeral-storage: 4Gi
                     limits:
-                      cpu: "2"
-                      memory: 8Gi
+                      cpu: "1"
+                      memory: 5Gi
+                      ephemeral-storage: 12Gi
                 - name: mc
                   image: quay.io/minio/mc:latest
                   command:
@@ -116,6 +121,8 @@ locals {
                       memory: 256Mi
             """) {
               node(POD_LABEL) {
+                currentBuild.description = 'CI agent allocated'
+                echo 'CI agent is ready; starting the build.'
                 def bucket = frontendBuckets[params.INSTANCE]
                 def gitBranch = params.GIT_BRANCH?.trim()
                 if (!gitBranch) {
@@ -127,18 +134,26 @@ locals {
                 }
 
                 stage('Checkout') {
-                  def checkoutConfig = [branch: gitBranch, url: frontRepo]
+                  def remoteConfig = [
+                    url: frontRepo,
+                    refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch
+                  ]
 
                   if (params.GIT_CREDENTIALS_ID?.trim()) {
-                    checkoutConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
+                    remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
                   }
 
-                  git checkoutConfig
+                  checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/' + gitBranch]],
+                    extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 10]],
+                    userRemoteConfigs: [remoteConfig]
+                  ])
                 }
 
                 stage('Build') {
                   container('node') {
-                    sh 'set -eu; npm install'
+                    sh 'set -eu; if [ -f package-lock.json ]; then npm ci; else npm install; fi'
                     sh params.BUILD_COMMAND
                     sh 'set -eu; INDEX_FILE=$(find dist -maxdepth 1 -type f -name "index*.html" ! -name "index.html" | sort | tail -n 1); if [ -z "$INDEX_FILE" ]; then echo "No versioned index*.html found in dist"; exit 1; fi; cp "$INDEX_FILE" dist/index.html; echo "Created stable index.html from $(basename "$INDEX_FILE")"'
                   }
@@ -163,12 +178,14 @@ locals {
     pipelineJob('${var.backend_job_name}') {
       description('Builds aof-back from the selected branch, pushes the image, and deploys the same instance with Helm.')
       keepDependencies(false)
+      properties {
+        disableConcurrentBuilds()
+      }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Backend instance and Kubernetes namespace to deploy.')
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
         stringParam('GIT_CREDENTIALS_ID', 'github-aof-token', 'Jenkins credential ID for private Git repositories.')
         stringParam('IMAGE_TAG', '', 'Optional image tag. Empty means BRANCH-build_number.')
-        stringParam('JAVA_VERSION', '17', 'Java major version used by the backend Docker build.')
       }
       definition {
         cps {
@@ -177,20 +194,30 @@ locals {
             def backRepo = 'https://github.com/akuzmin90/aof-back.git'
             def defaultGitBranches = [${local.backend_git_branch_map_entries}]
 
-            podTemplate(serviceAccount: 'jenkins', yaml: """
+            currentBuild.description = 'Waiting for autoscaled CI capacity'
+            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+
+            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
             apiVersion: v1
             kind: Pod
             spec:
               nodeSelector:
-                workload: database
+                workload: ci
               tolerations:
                 - key: dedicated
                   operator: Equal
-                  value: database
+                  value: ci
                   effect: NoSchedule
               containers:
                 - name: jnlp
                   image: jenkins/inbound-agent:latest-jdk21
+                  resources:
+                    requests:
+                      cpu: 50m
+                      memory: 128Mi
+                    limits:
+                      cpu: "500m"
+                      memory: 512Mi
                 - name: kaniko
                   image: gcr.io/kaniko-project/executor:v1.23.2-debug
                   command:
@@ -215,6 +242,15 @@ locals {
                   volumeMounts:
                     - name: kaniko-docker-config
                       mountPath: /kaniko/.docker
+                  resources:
+                    requests:
+                      cpu: 250m
+                      memory: 3Gi
+                      ephemeral-storage: 4Gi
+                    limits:
+                      cpu: "2"
+                      memory: 4Gi
+                      ephemeral-storage: 12Gi
                 - name: helm
                   image: dtzar/helm-kubectl:3.16.4
                   command:
@@ -224,6 +260,13 @@ locals {
                     - name: backend-chart
                       mountPath: /charts/aof-back
                       readOnly: true
+                  resources:
+                    requests:
+                      cpu: 50m
+                      memory: 128Mi
+                    limits:
+                      cpu: "500m"
+                      memory: 512Mi
               volumes:
                 - name: kaniko-docker-config
                   emptyDir: {}
@@ -234,6 +277,8 @@ locals {
 ${local.backend_chart_volume_items}
             """) {
               node(POD_LABEL) {
+                currentBuild.description = 'CI agent allocated'
+                echo 'CI agent is ready; starting the build.'
                 def imageTag = params.IMAGE_TAG?.trim()
                 if (!imageTag) {
                   imageTag = (params.INSTANCE + '-' + env.BUILD_NUMBER).replaceAll('[^A-Za-z0-9_.-]', '-')
@@ -242,11 +287,6 @@ ${local.backend_chart_volume_items}
                 def gitBranch = params.GIT_BRANCH?.trim()
                 if (!gitBranch) {
                   gitBranch = defaultGitBranches[params.INSTANCE] ?: params.INSTANCE
-                }
-
-                def javaVersion = params.JAVA_VERSION?.trim()
-                if (!javaVersion) {
-                  javaVersion = '17'
                 }
 
                 def namespace = 'aof-' + params.INSTANCE
@@ -259,13 +299,21 @@ ${local.backend_chart_volume_items}
                 currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + params.INSTANCE + ' ' + gitBranch + ' ' + imageTag
 
                 stage('Checkout') {
-                  def checkoutConfig = [branch: gitBranch, url: backRepo]
+                  def remoteConfig = [
+                    url: backRepo,
+                    refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch
+                  ]
 
                   if (params.GIT_CREDENTIALS_ID?.trim()) {
-                    checkoutConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
+                    remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
                   }
 
-                  git checkoutConfig
+                  checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '*/' + gitBranch]],
+                    extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 10]],
+                    userRemoteConfigs: [remoteConfig]
+                  ])
                 }
 
                 stage('Build and Push Image') {
@@ -273,15 +321,9 @@ ${local.backend_chart_volume_items}
                     withEnv([
                       "IMAGE_REPOSITORY=${var.backend_image_repository}",
                       "IMAGE_TAG=" + imageTag,
-                      "JAVA_VERSION=" + javaVersion
+                      "JAVA_VERSION=17"
                     ]) {
-                      sh '''
-                        set -eu
-                        AUTH=$(printf "%s:%s" "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64 | tr -d "\\n")
-                        cat > /kaniko/.docker/config.json <<EOF
-{"auths":{"$REGISTRY_SERVER":{"auth":"$AUTH"}}}
-EOF
-                      '''
+                      sh 'set -eu; AUTH=$(printf "%s:%s" "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64); FORMAT=$(printf %s eyJhdXRocyI6eyIlcyI6eyJhdXRoIjoiJXMifX19Cg== | base64 -d); printf "$FORMAT" "$REGISTRY_SERVER" "$AUTH" > /kaniko/.docker/config.json'
                       sh 'set -eu; /kaniko/executor --context "$WORKSPACE" --dockerfile "$WORKSPACE/Dockerfile" --destination "$IMAGE_REPOSITORY:$IMAGE_TAG" --build-arg "JAVA_VERSION=$JAVA_VERSION" --cache=true'
                     }
                   }
@@ -359,6 +401,9 @@ EOF
     pipelineJob('aof-db-dump') {
       description('Creates a manual PostgreSQL dump for the selected AOF instance and uploads it to S3.')
       keepDependencies(false)
+      properties {
+        disableConcurrentBuilds()
+      }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Deployment instance and namespace suffix.')
         stringParam('DATABASE', 'aof', 'Database to dump.')
@@ -368,16 +413,19 @@ EOF
         cps {
           sandbox(true)
           script('''
-            podTemplate(serviceAccount: 'jenkins', yaml: """
+            currentBuild.description = 'Waiting for autoscaled CI capacity'
+            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+
+            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
             apiVersion: v1
             kind: Pod
             spec:
               nodeSelector:
-                workload: database
+                workload: ci
               tolerations:
                 - key: dedicated
                   operator: Equal
-                  value: database
+                  value: ci
                   effect: NoSchedule
               containers:
                 - name: jnlp
@@ -399,6 +447,8 @@ EOF
                   tty: true
             """) {
               node(POD_LABEL) {
+                currentBuild.description = 'CI agent allocated'
+                echo 'CI agent is ready; starting the build.'
                 def namespace = 'aof-' + params.INSTANCE
                 def clusterName = 'aof-' + params.INSTANCE + '-db'
                 def dumpPath = params.INSTANCE + '/manual'
@@ -451,6 +501,9 @@ EOF
     pipelineJob('aof-db-restore') {
       description('Restores a PostgreSQL dump from S3 into the selected AOF instance database.')
       keepDependencies(false)
+      properties {
+        disableConcurrentBuilds()
+      }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Deployment instance and namespace suffix.')
         stringParam('DUMP_OBJECT', '', 'Object key inside ${var.postgres_dump_bucket}, for example production/automatic/nsbackup-2026-07-17.gz or feature/manual/aof-manual-20260525T120000Z.dump.')
@@ -461,16 +514,19 @@ EOF
         cps {
           sandbox(true)
           script('''
-            podTemplate(serviceAccount: 'jenkins', yaml: """
+            currentBuild.description = 'Waiting for autoscaled CI capacity'
+            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+
+            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
             apiVersion: v1
             kind: Pod
             spec:
               nodeSelector:
-                workload: database
+                workload: ci
               tolerations:
                 - key: dedicated
                   operator: Equal
-                  value: database
+                  value: ci
                   effect: NoSchedule
               containers:
                 - name: jnlp
@@ -492,6 +548,8 @@ EOF
                   tty: true
             """) {
               node(POD_LABEL) {
+                currentBuild.description = 'CI agent allocated'
+                echo 'CI agent is ready; starting the build.'
                 def namespace = 'aof-' + params.INSTANCE
                 def clusterName = 'aof-' + params.INSTANCE + '-db'
 

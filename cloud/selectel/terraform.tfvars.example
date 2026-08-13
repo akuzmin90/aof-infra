@@ -1,0 +1,9 @@
+selectel_domain_name = "replace-with-selectel-account-id"
+selectel_username    = "replace-with-selectel-service-user"
+selectel_password    = "replace-with-selectel-service-user-password"
+selectel_project_id  = "replace-with-selectel-project-id"
+
+frontend_s3_access_key        = "replace-with-policy-manager-s3-access-key"
+frontend_s3_secret_key        = "replace-with-policy-manager-s3-secret-key"
+frontend_s3_publisher_user_id = "replace-with-selectel-iam-user-id"
+frontend_s3_policy_manager_user_id = "replace-with-terraform-service-user-id"

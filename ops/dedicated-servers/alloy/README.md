@@ -12,6 +12,7 @@ These servers are outside Kubernetes, so this is intentionally not under `k8s/`.
 ## Files
 
 - `kayra/config.alloy` - current Kayra-style config: host `dev` logs plus Docker `feature` and `release` logs.
+- `hetzner/config.alloy` - Hetzner host-only `dev` logs from Tomcat and PostgreSQL.
 - `prod/config.alloy` - production host-only config for Tomcat and PostgreSQL logs.
 - `templates/host-only.config.alloy` - template for a production server without Docker.
 - `install-ubuntu.md` - install and operate Alloy on Ubuntu/Debian hosts.
@@ -89,6 +90,12 @@ Kayra feature logs:
 
 ```logql
 {source="dedicated", host="kayra", env="feature"}
+```
+
+Hetzner logs:
+
+```logql
+{source="dedicated", host="hetzner", env="dev"}
 ```
 
 Production logs:

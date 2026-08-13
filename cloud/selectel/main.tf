@@ -26,6 +26,11 @@ terraform {
       version = "3.0.0"
     }
 
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+
   }
 }
 
@@ -61,6 +66,22 @@ provider "openstack" {
   region      = "ru-7"
 }
 
+provider "aws" {
+  region     = "ru-7"
+  access_key = var.frontend_s3_access_key
+  secret_key = var.frontend_s3_secret_key
+
+  skip_credentials_validation = true
+  skip_region_validation      = true
+  skip_requesting_account_id  = true
+  skip_metadata_api_check     = true
+  s3_use_path_style           = true
+
+  endpoints {
+    s3 = var.frontend_s3_endpoint_url
+  }
+}
+
 resource "openstack_networking_network_v2" "k8s" {
   name           = "aof-k8s-network"
   admin_state_up = true
@@ -88,16 +109,11 @@ resource "openstack_networking_router_interface_v2" "k8s" {
   subnet_id = openstack_networking_subnet_v2.k8s.id
 }
 
-data "selectel_mks_kube_versions_v1" "available" {
-  project_id = var.selectel_project_id
-  region     = "ru-7"
-}
-
 resource "selectel_mks_cluster_v1" "main" {
   name                              = "aof-k8s"
   project_id                        = var.selectel_project_id
   region                            = "ru-7"
-  kube_version                      = data.selectel_mks_kube_versions_v1.available.latest_version
+  kube_version                      = var.kubernetes_version
   zonal                             = true
   enable_patch_version_auto_upgrade = false
   network_id                        = openstack_networking_network_v2.k8s.id
@@ -149,6 +165,34 @@ resource "selectel_mks_nodegroup_v1" "database" {
   taints {
     key    = "dedicated"
     value  = "database"
+    effect = "NoSchedule"
+  }
+}
+
+resource "selectel_mks_nodegroup_v1" "ci" {
+  cluster_id                   = selectel_mks_cluster_v1.main.id
+  project_id                   = selectel_mks_cluster_v1.main.project_id
+  region                       = selectel_mks_cluster_v1.main.region
+  availability_zone            = "ru-7a"
+  nodes_count                  = 0
+  cpus                         = 4
+  ram_mb                       = 8192
+  volume_gb                    = 32
+  volume_type                  = "universal.ru-7a"
+  install_nvidia_device_plugin = false
+  preemptible                  = true
+  enable_autoscale             = true
+  autoscale_min_nodes          = 0
+  autoscale_max_nodes          = 1
+
+  labels = {
+    "hitmakers.ru/node-pool" = "ci"
+    "workload"               = "ci"
+  }
+
+  taints {
+    key    = "dedicated"
+    value  = "ci"
     effect = "NoSchedule"
   }
 }
