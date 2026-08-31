@@ -36,9 +36,6 @@ locals {
     pipelineJob('${var.frontend_job_name}') {
       description('${var.frontend_job_description}')
       keepDependencies(false)
-      properties {
-        disableConcurrentBuilds()
-      }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Frontend instance and S3 bucket to deploy.')
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
@@ -53,10 +50,11 @@ locals {
             def frontendBuckets = [${local.frontend_bucket_map_entries}]
             def defaultGitBranches = [${local.frontend_git_branch_map_entries}]
 
-            currentBuild.description = 'Waiting for autoscaled CI capacity'
-            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+            lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Frontend deployment for ' + params.INSTANCE) {
+              currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
+              echo 'Requesting a dedicated CI node. Worker fallback is considered only if CI allocation fails for 15 minutes.'
 
-            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
+              def ciAgentYaml = """
             apiVersion: v1
             kind: Pod
             spec:
@@ -119,10 +117,32 @@ locals {
                     limits:
                       cpu: "250m"
                       memory: 256Mi
-            """) {
-              node(POD_LABEL) {
-                currentBuild.description = 'CI agent allocated'
-                echo 'CI agent is ready; starting the build.'
+            """
+              def workerAgentYaml = ciAgentYaml
+                .replace('workload: ci', 'workload: compute')
+                .replace('cpu: "500m"', 'cpu: "200m"')
+                .replace('cpu: "250m"', 'cpu: "200m"')
+                .replace('cpu: "1"', 'cpu: "600m"')
+                .replace('              containers:', """              initContainers:
+                - name: worker-capacity-reservation
+                  image: busybox:1.36.1
+                  command:
+                    - /bin/true
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: 5Gi
+                    limits:
+                      cpu: "1"
+                      memory: 5Gi
+              containers:""")
+              if (!workerAgentYaml.contains('workload: compute') || !workerAgentYaml.contains('worker-capacity-reservation')) {
+                error('Internal error while rendering the compute fallback agent')
+              }
+              def agentLocation = 'CI'
+              def executeFrontendBuild = {
+                currentBuild.description = agentLocation + ' agent allocated'
+                echo agentLocation + ' agent is ready; starting the build.'
                 def bucket = frontendBuckets[params.INSTANCE]
                 def gitBranch = params.GIT_BRANCH?.trim()
                 if (!gitBranch) {
@@ -167,6 +187,29 @@ locals {
                   }
                 }
               }
+
+              def ciAgentAllocated = false
+              try {
+                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 900, yaml: ciAgentYaml) {
+                  node(POD_LABEL) {
+                    ciAgentAllocated = true
+                    executeFrontendBuild()
+                  }
+                }
+              } catch (Exception ciAllocationFailure) {
+                if (ciAgentAllocated) {
+                  throw ciAllocationFailure
+                }
+
+                agentLocation = 'compute fallback'
+                currentBuild.description = 'CI allocation failed; waiting for safe worker capacity'
+                echo 'No CI agent connected within 15 minutes. Trying a compute worker with a 1 CPU / 5 GiB scheduling reservation.'
+                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 600, yaml: workerAgentYaml) {
+                  node(POD_LABEL) {
+                    executeFrontendBuild()
+                  }
+                }
+              }
             }
           ''')
         }
@@ -178,14 +221,12 @@ locals {
     pipelineJob('${var.backend_job_name}') {
       description('Builds aof-back from the selected branch, pushes the image, and deploys the same instance with Helm.')
       keepDependencies(false)
-      properties {
-        disableConcurrentBuilds()
-      }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Backend instance and Kubernetes namespace to deploy.')
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
         stringParam('GIT_CREDENTIALS_ID', 'github-aof-token', 'Jenkins credential ID for private Git repositories.')
         stringParam('IMAGE_TAG', '', 'Optional image tag. Empty means BRANCH-build_number.')
+        stringParam('DEPLOY_TIMEOUT', '3h', 'Helm deployment timeout. Use a Go duration such as 45m, 60m, or 3h.')
       }
       definition {
         cps {
@@ -194,10 +235,11 @@ locals {
             def backRepo = 'https://github.com/akuzmin90/aof-back.git'
             def defaultGitBranches = [${local.backend_git_branch_map_entries}]
 
-            currentBuild.description = 'Waiting for autoscaled CI capacity'
-            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+            lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Backend deployment for ' + params.INSTANCE) {
+              currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
+              echo 'Requesting a dedicated CI node. Worker fallback is considered only if CI allocation fails for 15 minutes.'
 
-            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
+              def ciAgentYaml = """
             apiVersion: v1
             kind: Pod
             spec:
@@ -275,19 +317,51 @@ locals {
                     name: ${local.backend_chart_name}
                     items:
 ${local.backend_chart_volume_items}
-            """) {
-              node(POD_LABEL) {
-                currentBuild.description = 'CI agent allocated'
-                echo 'CI agent is ready; starting the build.'
+            """
+              def workerAgentYaml = ciAgentYaml
+                .replace('workload: ci', 'workload: compute')
+                .replace('cpu: "500m"', 'cpu: "200m"')
+                .replace('cpu: "2"', 'cpu: "600m"')
+                .replace('              containers:', """              initContainers:
+                - name: worker-capacity-reservation
+                  image: busybox:1.36.1
+                  command:
+                    - /bin/true
+                  resources:
+                    requests:
+                      cpu: "1"
+                      memory: 5Gi
+                    limits:
+                      cpu: "1"
+                      memory: 5Gi
+              containers:""")
+              if (!workerAgentYaml.contains('workload: compute') || !workerAgentYaml.contains('worker-capacity-reservation')) {
+                error('Internal error while rendering the compute fallback agent')
+              }
+              def agentLocation = 'CI'
+              def executeBackendBuild = {
+                currentBuild.description = agentLocation + ' agent allocated'
+                echo agentLocation + ' agent is ready; starting the build.'
                 def imageTag = params.IMAGE_TAG?.trim()
-                if (!imageTag) {
-                  imageTag = (params.INSTANCE + '-' + env.BUILD_NUMBER).replaceAll('[^A-Za-z0-9_.-]', '-')
-                }
 
                 def gitBranch = params.GIT_BRANCH?.trim()
                 if (!gitBranch) {
                   gitBranch = defaultGitBranches[params.INSTANCE] ?: params.INSTANCE
                 }
+
+                def deployTimeout = params.DEPLOY_TIMEOUT?.trim()
+                if (!deployTimeout) {
+                  deployTimeout = '3h'
+                }
+
+                if (!(deployTimeout ==~ /^[1-9][0-9]*[smh]$/)) {
+                  error('DEPLOY_TIMEOUT must be a positive Go duration using s, m, or h, for example 45m, 60m, or 3h')
+                }
+
+                def timeoutAmount = deployTimeout.substring(0, deployTimeout.length() - 1).toInteger()
+                def timeoutUnit = deployTimeout.substring(deployTimeout.length() - 1)
+                def timeoutSeconds = timeoutAmount * [s: 1, m: 60, h: 3600][timeoutUnit]
+                def startupFailureThreshold = Math.ceil((timeoutSeconds + 900) / 5.0d).toInteger()
 
                 def namespace = 'aof-' + params.INSTANCE
                 def host = params.INSTANCE + '.${var.app_domain_suffix}'
@@ -295,8 +369,8 @@ ${local.backend_chart_volume_items}
                 def dbCluster = 'aof-' + params.INSTANCE + '-db'
                 def tlsSecret = params.INSTANCE + '-k8s-zazer-fun-tls'
                 def legacyTlsSecret = params.INSTANCE + '-zazer-fun-tls'
-
-                currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + params.INSTANCE + ' ' + gitBranch + ' ' + imageTag
+                def backendMemoryRequest = params.INSTANCE == 'dev' ? '1Gi' : '768Mi'
+                def backendMemoryLimit = params.INSTANCE == 'dev' ? '2Gi' : '1536Mi'
 
                 stage('Checkout') {
                   def remoteConfig = [
@@ -308,12 +382,22 @@ ${local.backend_chart_volume_items}
                     remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
                   }
 
-                  checkout([
+                  def checkoutResult = checkout([
                     $class: 'GitSCM',
                     branches: [[name: '*/' + gitBranch]],
                     extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 10]],
                     userRemoteConfigs: [remoteConfig]
                   ])
+
+                  if (!imageTag) {
+                    def gitCommit = checkoutResult.GIT_COMMIT?.trim()
+                    if (!gitCommit) {
+                      error('Checkout did not return GIT_COMMIT; refusing to create a mutable default image tag')
+                    }
+                    imageTag = (params.INSTANCE + '-' + env.BUILD_NUMBER + '-' + gitCommit.take(12)).replaceAll('[^A-Za-z0-9_.-]', '-')
+                  }
+
+                  currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + params.INSTANCE + ' ' + gitBranch + ' ' + imageTag
                 }
 
                 stage('Build and Push Image') {
@@ -339,7 +423,10 @@ ${local.backend_chart_volume_items}
                       "LEGACY_HOST=" + legacyHost,
                       "DB_CLUSTER=" + dbCluster,
                       "TLS_SECRET=" + tlsSecret,
-                      "LEGACY_TLS_SECRET=" + legacyTlsSecret
+                      "LEGACY_TLS_SECRET=" + legacyTlsSecret,
+                      "BACKEND_MEMORY_REQUEST=" + backendMemoryRequest,
+                      "BACKEND_MEMORY_LIMIT=" + backendMemoryLimit,
+                      "DEPLOY_TIMEOUT=" + deployTimeout
                     ]) {
                       sh([
                         'set -eu',
@@ -352,12 +439,23 @@ ${local.backend_chart_volume_items}
                         'image:',
                         '  repository: $IMAGE_REPOSITORY',
                         '  tag: $IMAGE_TAG',
-                        '  pullPolicy: IfNotPresent',
+                        '  pullPolicy: Always',
                         'imagePullSecrets:',
                         '  - name: selectel-registry',
                         'database:',
                         '  url: jdbc:postgresql://$DB_CLUSTER-rw.$NAMESPACE.svc.cluster.local:5432/aof',
                         '  existingSecret: $DB_SECRET',
+                        'resources:',
+                        '  requests:',
+                        '    cpu: 200m',
+                        '    memory: $BACKEND_MEMORY_REQUEST',
+                        '  limits:',
+                        '    cpu: "2"',
+                        '    memory: $BACKEND_MEMORY_LIMIT',
+                        'startupProbe:',
+                        '  failureThreshold: ' + startupFailureThreshold,
+                        '  periodSeconds: 5',
+                        '  timeoutSeconds: 3',
                         'ingress:',
                         '  enabled: true',
                         '  className: nginx',
@@ -384,9 +482,32 @@ ${local.backend_chart_volume_items}
                         'EOF',
                         'helm lint /charts/aof-back -f /tmp/aof-back-values.yaml',
                         'helm template aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml > /tmp/aof-back-rendered.yaml',
-                        'helm upgrade --install aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml --atomic --wait --timeout 15m'
+                        'helm upgrade --install aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml --atomic --wait --timeout "$DEPLOY_TIMEOUT"'
                       ].join('\\n'))
                     }
+                  }
+                }
+              }
+
+              def ciAgentAllocated = false
+              try {
+                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 900, yaml: ciAgentYaml) {
+                  node(POD_LABEL) {
+                    ciAgentAllocated = true
+                    executeBackendBuild()
+                  }
+                }
+              } catch (Exception ciAllocationFailure) {
+                if (ciAgentAllocated) {
+                  throw ciAllocationFailure
+                }
+
+                agentLocation = 'compute fallback'
+                currentBuild.description = 'CI allocation failed; waiting for safe worker capacity'
+                echo 'No CI agent connected within 15 minutes. Trying a compute worker with a 1 CPU / 5 GiB scheduling reservation.'
+                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 600, yaml: workerAgentYaml) {
+                  node(POD_LABEL) {
+                    executeBackendBuild()
                   }
                 }
               }
@@ -497,6 +618,103 @@ ${local.backend_chart_volume_items}
     }
   EOT
 
+  database_restore_script = <<-SCRIPT
+    #!/usr/bin/env bash
+    set -Eeuo pipefail
+    set +x
+
+    filter_sql_for_postgres_11() {
+      sed \
+        -e '/^\\restrict[[:space:]]/d' \
+        -e '/^\\unrestrict[[:space:]]/d' \
+        -e '/^SET transaction_timeout[[:space:]]*=/d' \
+        -e '/^SET default_table_access_method[[:space:]]*=/d'
+    }
+
+    verify_compatibility_filter() {
+      local actual expected
+      actual="$({
+        printf '%s\n' '\restrict token'
+        printf '%s\n' 'SET transaction_timeout = 0;'
+        printf '%s\n' 'SET default_table_access_method = heap;'
+        printf '%s\n' 'SELECT 1;'
+        printf '%s\n' '\unrestrict token'
+      } | filter_sql_for_postgres_11)"
+      expected='SELECT 1;'
+      if [[ "$actual" != "$expected" ]]; then
+        echo 'Internal PostgreSQL 11 compatibility-filter self-test failed' >&2
+        exit 3
+      fi
+    }
+
+    restore_plain_sql() {
+      echo 'Streaming PostgreSQL 11-compatible SQL backup into psql'
+      filter_sql_for_postgres_11 |
+        psql -X --quiet --dbname="$TARGET_DATABASE" --set=ON_ERROR_STOP=1 >/dev/null
+    }
+
+    export PGUSER="$(cat .db-user)"
+    export PGPASSWORD="$(cat .db-password)"
+    export PGOPTIONS='-c statement_timeout=0 -c lock_timeout=300000'
+
+    echo "Restore client: $(psql --version)"
+    echo "Target server: $(psql -X --dbname="$TARGET_DATABASE" --tuples-only --no-align --command='SHOW server_version')"
+    verify_compatibility_filter
+
+    case "$DUMP_OBJECT" in
+      *.sql.gz|*.gz)
+        echo 'Validating the complete compressed SQL backup before changing the database'
+        gzip --test restore.input.gz
+        ;;
+      *.sql)
+        test -s restore.input
+        ;;
+      *.dump)
+        pg_restore --list restore.input >/dev/null
+        ;;
+      *)
+        echo "Unsupported dump format: $DUMP_OBJECT" >&2
+        exit 2
+        ;;
+    esac
+
+    if [[ "$VALIDATE_ONLY" == 'true' ]]; then
+      echo 'Backup and database preflight validation completed'
+      exit 0
+    fi
+
+    if [[ "$RESET_SCHEMA" == 'true' ]]; then
+      : > .database-reset-started
+      echo 'Terminating remaining connections owned by the restore role'
+      psql -X --dbname="$TARGET_DATABASE" --set=ON_ERROR_STOP=1 \
+        --command="SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = current_database() AND usename = current_user AND pid <> pg_backend_pid();" \
+        >/dev/null
+      psql -X --dbname="$TARGET_DATABASE" --set=ON_ERROR_STOP=1 \
+        --command='DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION CURRENT_USER;'
+    fi
+
+    case "$DUMP_OBJECT" in
+      *.sql.gz|*.gz)
+        gzip --decompress --stdout restore.input.gz | restore_plain_sql
+        ;;
+      *.sql)
+        restore_plain_sql < restore.input
+        ;;
+      *.dump)
+        pg_restore --no-owner --no-acl --clean --if-exists --exit-on-error \
+          --dbname="$TARGET_DATABASE" restore.input
+        ;;
+    esac
+
+    table_count="$(psql -X --dbname="$TARGET_DATABASE" --tuples-only --no-align \
+      --command="SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public'")"
+    echo "Restored public tables: $table_count"
+    if [[ ! "$table_count" =~ ^[1-9][0-9]*$ ]]; then
+      echo 'Restore verification failed: the public schema contains no tables' >&2
+      exit 4
+    fi
+  SCRIPT
+
   database_restore_job_script = <<-EOT
     pipelineJob('aof-db-restore') {
       description('Restores a PostgreSQL dump from S3 into the selected AOF instance database.')
@@ -514,13 +732,17 @@ ${local.backend_chart_volume_items}
         cps {
           sandbox(true)
           script('''
-            currentBuild.description = 'Waiting for autoscaled CI capacity'
-            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+            lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Database restore for ' + params.INSTANCE) {
+              currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
+              echo 'Database restores require a dedicated CI node and never fall back to application workers.'
 
-            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
+              podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 900, workspaceVolume: dynamicPVC(accessModes: 'ReadWriteOnce', requestsSize: '64Gi', storageClassName: 'universal2.ru-7a'), yaml: """
             apiVersion: v1
             kind: Pod
             spec:
+              securityContext:
+                fsGroup: 1000
+                fsGroupChangePolicy: OnRootMismatch
               nodeSelector:
                 workload: ci
               tolerations:
@@ -536,6 +758,10 @@ ${local.backend_chart_volume_items}
                   command:
                     - cat
                   tty: true
+                  volumeMounts:
+                    - name: restore-script
+                      mountPath: /opt/aof-restore
+                      readOnly: true
                 - name: kubectl
                   image: dtzar/helm-kubectl:3.16.4
                   command:
@@ -546,52 +772,114 @@ ${local.backend_chart_volume_items}
                   command:
                     - cat
                   tty: true
+              volumes:
+                - name: restore-script
+                  configMap:
+                    name: aof-db-restore-script
             """) {
               node(POD_LABEL) {
                 currentBuild.description = 'CI agent allocated'
                 echo 'CI agent is ready; starting the build.'
                 def namespace = 'aof-' + params.INSTANCE
                 def clusterName = 'aof-' + params.INSTANCE + '-db'
+                def backendReplicas = null
+                def restoreCompleted = false
 
-                stage('Prepare Secrets') {
-                  container('kubectl') {
-                    withEnv([
-                      "NAMESPACE=" + namespace,
-                      "DB_SECRET=" + clusterName + "-app"
-                    ]) {
-                      sh 'set -eu; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.username}" | base64 -d > .db-user; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.password}" | base64 -d > .db-password; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_KEY_ID}" | base64 -d > .s3-access-key; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_SECRET_KEY}" | base64 -d > .s3-secret-key'
+                try {
+                  stage('Prepare Secrets') {
+                    container('kubectl') {
+                      withEnv([
+                        "NAMESPACE=" + namespace,
+                        "DB_SECRET=" + clusterName + "-app"
+                      ]) {
+                        sh 'set -eu; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.username}" | base64 -d > .db-user; kubectl -n "$NAMESPACE" get secret "$DB_SECRET" -o jsonpath="{.data.password}" | base64 -d > .db-password; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_KEY_ID}" | base64 -d > .s3-access-key; kubectl -n "$NAMESPACE" get secret aof-postgres-s3 -o jsonpath="{.data.ACCESS_SECRET_KEY}" | base64 -d > .s3-secret-key'
+                      }
                     }
                   }
-                }
 
-                stage('Download') {
-                  container('mc') {
-                    withEnv([
-                      "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
-                      "DUMP_BUCKET=${var.postgres_dump_bucket}",
-                      "DUMP_OBJECT=" + params.DUMP_OBJECT
-                    ]) {
-                      sh 'set +x; set -eu; test -n "$DUMP_OBJECT"; case "$DUMP_OBJECT" in *.sql.gz|*.gz) echo "Compressed SQL backup will be streamed during Restore" ;; *) export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc cp "target/$DUMP_BUCKET/$DUMP_OBJECT" restore.input; ls -lh restore.input ;; esac'
+                  stage('Download') {
+                    container('mc') {
+                      withEnv([
+                        "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
+                        "DUMP_BUCKET=${var.postgres_dump_bucket}",
+                        "DUMP_OBJECT=" + params.DUMP_OBJECT
+                      ]) {
+                        sh 'set +x; set -eu; test -n "$DUMP_OBJECT"; export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY"; mc stat "target/$DUMP_BUCKET/$DUMP_OBJECT" >/dev/null; case "$DUMP_OBJECT" in *.sql.gz|*.gz) mc cp "target/$DUMP_BUCKET/$DUMP_OBJECT" restore.input.gz; ls -lh restore.input.gz ;; *) mc cp "target/$DUMP_BUCKET/$DUMP_OBJECT" restore.input; ls -lh restore.input ;; esac'
+                      }
                     }
                   }
-                }
 
-                stage('Restore') {
-                  container('postgres') {
-                    withEnv([
-                      "PGHOST=" + clusterName + "-rw." + namespace + ".svc.cluster.local",
-                      "PGPORT=5432",
-                      "TARGET_DATABASE=" + params.TARGET_DATABASE,
-                      "RESET_SCHEMA=" + params.RESET_SCHEMA,
-                      "DUMP_OBJECT=" + params.DUMP_OBJECT,
-                      "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
-                      "DUMP_BUCKET=${var.postgres_dump_bucket}"
-                    ]) {
-                      sh 'set +x; set -eu; export PGUSER=$(cat .db-user); export PGPASSWORD=$(cat .db-password); echo "Taking pre-restore dump"; pg_dump -Fc -d "$TARGET_DATABASE" -f pre-restore.dump; restore_status=0; if [ "$RESET_SCHEMA" = "true" ]; then psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \\"$PGUSER\\";"; fi; case "$DUMP_OBJECT" in *.sql.gz|*.gz) echo "Streaming compressed SQL backup from S3 into psql"; if ! command -v mc >/dev/null 2>&1; then apt-get update >/dev/null; apt-get install -y --no-install-recommends ca-certificates curl >/dev/null; curl -fsSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc; chmod +x /usr/local/bin/mc; fi; export S3_ACCESS_KEY=$(cat .s3-access-key); export S3_SECRET_KEY=$(cat .s3-secret-key); mc alias set target "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null; mc cat "target/$DUMP_BUCKET/$DUMP_OBJECT" | gunzip -c | psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 ;; *.sql) psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -f restore.input ;; *.dump) pg_restore --no-owner --no-acl --clean --if-exists -d "$TARGET_DATABASE" restore.input ;; *) echo "Unsupported dump format: $DUMP_OBJECT"; restore_status=2 ;; esac || restore_status=$?; if [ "$restore_status" -ne 0 ]; then echo "Restore failed with status $restore_status; rolling database schema back"; psql -d "$TARGET_DATABASE" -v ON_ERROR_STOP=1 -c "DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public AUTHORIZATION \\"$PGUSER\\";"; pg_restore --no-owner --no-acl --clean --if-exists -d "$TARGET_DATABASE" pre-restore.dump; exit "$restore_status"; fi'
+                  stage('Validate Backup') {
+                    container('postgres') {
+                      withEnv([
+                        "PGHOST=" + clusterName + "-rw." + namespace + ".svc.cluster.local",
+                        "PGPORT=5432",
+                        "TARGET_DATABASE=" + params.TARGET_DATABASE,
+                        "RESET_SCHEMA=" + params.RESET_SCHEMA,
+                        "DUMP_OBJECT=" + params.DUMP_OBJECT,
+                        "VALIDATE_ONLY=true"
+                      ]) {
+                        sh 'bash /opt/aof-restore/restore.sh'
+                      }
+                    }
+                  }
+
+                  if (params.RESET_SCHEMA) {
+                    stage('Quiesce Backend') {
+                      container('kubectl') {
+                        withEnv(["NAMESPACE=" + namespace]) {
+                          backendReplicas = sh(
+                            returnStdout: true,
+                            script: 'set -eu; kubectl -n "$NAMESPACE" get deployment aof-back -o jsonpath="{.spec.replicas}"'
+                          ).trim()
+                          if (!(backendReplicas ==~ /^[0-9]+$/)) {
+                            error("Invalid aof-back replica count: " + backendReplicas)
+                          }
+                          withEnv(["BACKEND_REPLICAS=" + backendReplicas]) {
+                            sh 'set -eu; if [ "$BACKEND_REPLICAS" -gt 0 ]; then kubectl -n "$NAMESPACE" patch deployment aof-back --type=merge -p "{\\\\\"spec\\\\\":{\\\\\"replicas\\\\\":0}}"; kubectl -n "$NAMESPACE" wait --for=delete pod -l app.kubernetes.io/instance=aof-back,app.kubernetes.io/name=aof-back --timeout=300s; else echo "aof-back is already scaled to zero"; fi'
+                          }
+                        }
+                      }
+                    }
+                  }
+
+                  stage('Restore') {
+                    container('postgres') {
+                      withEnv([
+                        "PGHOST=" + clusterName + "-rw." + namespace + ".svc.cluster.local",
+                        "PGPORT=5432",
+                        "TARGET_DATABASE=" + params.TARGET_DATABASE,
+                        "RESET_SCHEMA=" + params.RESET_SCHEMA,
+                        "DUMP_OBJECT=" + params.DUMP_OBJECT,
+                        "VALIDATE_ONLY=false",
+                        "S3_ENDPOINT=${var.postgres_s3_endpoint_url}",
+                        "DUMP_BUCKET=${var.postgres_dump_bucket}"
+                      ]) {
+                        sh 'bash /opt/aof-restore/restore.sh'
+                        restoreCompleted = true
+                      }
+                    }
+                  }
+                } finally {
+                  if (backendReplicas != null) {
+                    if (restoreCompleted || !fileExists('.database-reset-started')) {
+                      stage('Resume Backend') {
+                        container('kubectl') {
+                          withEnv([
+                            "NAMESPACE=" + namespace,
+                            "BACKEND_REPLICAS=" + backendReplicas
+                          ]) {
+                            sh 'set -eu; kubectl -n "$NAMESPACE" patch deployment aof-back --type=merge -p "{\\\\\"spec\\\\\":{\\\\\"replicas\\\\\":$BACKEND_REPLICAS}}"; if [ "$BACKEND_REPLICAS" -gt 0 ]; then kubectl -n "$NAMESPACE" rollout status deployment/aof-back --timeout=1200s; fi'
+                          }
+                        }
+                      }
+                    } else {
+                      echo 'Restore did not complete after schema mutation started; leaving aof-back scaled down to protect the partially restored database.'
                     }
                   }
                 }
               }
+            }
             }
           ''')
         }
@@ -668,6 +956,17 @@ resource "kubernetes_config_map" "backend_chart" {
   data = local.backend_chart_data
 }
 
+resource "kubernetes_config_map" "database_restore_script" {
+  metadata {
+    name      = "aof-db-restore-script"
+    namespace = kubernetes_namespace.jenkins.metadata[0].name
+  }
+
+  data = {
+    "restore.sh" = local.database_restore_script
+  }
+}
+
 resource "helm_release" "jenkins" {
   name       = "jenkins"
   namespace  = kubernetes_namespace.jenkins.metadata[0].name
@@ -732,7 +1031,8 @@ resource "helm_release" "jenkins" {
           "workflow-aggregator:608.v67378e9d3db_1",
           "git:5.8.0",
           "configuration-as-code:latest",
-          "job-dsl:latest"
+          "job-dsl:latest",
+          "lockable-resources:1539.v4db_b_fc1cc115"
         ]
 
         JCasC = {

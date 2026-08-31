@@ -552,7 +552,9 @@ resource "helm_release" "loki" {
       }
 
       singleBinary = {
-        replicas = 1
+        replicas     = 1
+        nodeSelector = var.loki_node_selector
+        tolerations  = var.loki_tolerations
         persistence = {
           enabled      = true
           size         = "10Gi"

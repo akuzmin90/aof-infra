@@ -167,16 +167,10 @@ variable "wal_storage_class" {
 }
 
 variable "postgres_resources" {
-  description = "CPU and memory requests/limits for PostgreSQL pods."
+  description = "CPU and memory requests/limits for PostgreSQL pods. Set limits to an empty map to allow bursting into node headroom."
   type = object({
-    requests = object({
-      cpu    = string
-      memory = string
-    })
-    limits = object({
-      cpu    = string
-      memory = string
-    })
+    requests = map(string)
+    limits   = map(string)
   })
   default = {
     requests = {

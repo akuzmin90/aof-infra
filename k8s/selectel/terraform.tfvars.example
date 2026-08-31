@@ -28,8 +28,6 @@ legacy_app_domain_suffix        = "zazer.fun"
 legacy_runtime_services_enabled = false
 jenkins_host                    = "jenkins.k8s.zazer.fun"
 aof_back_image_repository       = "cr.selcloud.ru/aof-registry/aof-back"
-aof_back_image_tag              = "latest"
-aof_back_image_pull_secret_names = []
 
 # Get these from cloud/selectel outputs after applying the cloud layer:
 # tofu -chdir=cloud/selectel output -raw registry_username

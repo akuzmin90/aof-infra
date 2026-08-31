@@ -53,6 +53,23 @@ variable "loki_retention_period" {
   default     = "720h"
 }
 
+variable "loki_node_selector" {
+  description = "Node selector for the stateful Loki workload."
+  type        = map(string)
+  default     = {}
+}
+
+variable "loki_tolerations" {
+  description = "Tolerations for the stateful Loki workload."
+  type = list(object({
+    key      = string
+    operator = string
+    value    = optional(string)
+    effect   = optional(string)
+  }))
+  default = []
+}
+
 variable "grafana_public_url" {
   description = "Optional external URL where Grafana is served."
   type        = string

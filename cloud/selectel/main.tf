@@ -150,8 +150,8 @@ resource "selectel_mks_nodegroup_v1" "database" {
   region                       = selectel_mks_cluster_v1.main.region
   availability_zone            = "ru-7a"
   nodes_count                  = 1
-  cpus                         = 4
-  ram_mb                       = 16384
+  cpus                         = 8
+  ram_mb                       = 32768
   volume_gb                    = 64
   volume_type                  = "fast.ru-7a"
   install_nvidia_device_plugin = false
@@ -167,6 +167,10 @@ resource "selectel_mks_nodegroup_v1" "database" {
     value  = "database"
     effect = "NoSchedule"
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "selectel_mks_nodegroup_v1" "ci" {
@@ -177,13 +181,13 @@ resource "selectel_mks_nodegroup_v1" "ci" {
   nodes_count                  = 0
   cpus                         = 4
   ram_mb                       = 8192
-  volume_gb                    = 32
+  volume_gb                    = 64
   volume_type                  = "universal.ru-7a"
   install_nvidia_device_plugin = false
   preemptible                  = true
   enable_autoscale             = true
   autoscale_min_nodes          = 0
-  autoscale_max_nodes          = 1
+  autoscale_max_nodes          = 3
 
   labels = {
     "hitmakers.ru/node-pool" = "ci"
@@ -194,6 +198,10 @@ resource "selectel_mks_nodegroup_v1" "ci" {
     key    = "dedicated"
     value  = "ci"
     effect = "NoSchedule"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

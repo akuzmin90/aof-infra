@@ -16,22 +16,10 @@ variable "name" {
   default     = "frontend-gateway"
 }
 
-variable "host" {
-  description = "Host served by this gateway."
-  type        = string
-  default     = "dev.hitmakers.ru"
-}
-
 variable "s3_origin" {
   description = "HTTP origin for S3-compatible object storage, without trailing slash."
   type        = string
   default     = "http://minio.minio.svc.cluster.local:9000"
-}
-
-variable "s3_host_header" {
-  description = "Host header to send to the S3 origin."
-  type        = string
-  default     = "minio.minio.svc.cluster.local"
 }
 
 variable "s3_region" {

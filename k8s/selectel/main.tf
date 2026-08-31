@@ -74,37 +74,6 @@ resource "kubernetes_storage_class_v1" "universal2_ru_7a" {
   }
 }
 
-import {
-  to = module.frontend_gateway["feature"].kubernetes_secret.s3
-  id = "aof-feature/frontend-gateway-s3"
-}
-
-import {
-  to = module.frontend_gateway["feature"].kubernetes_config_map.proxy
-  id = "aof-feature/frontend-gateway-proxy"
-}
-
-removed {
-  from = helm_release.aof_back
-
-  lifecycle {
-    destroy = false
-  }
-}
-
-removed {
-  from = random_password.aof_back_client_id
-
-  lifecycle {
-    destroy = false
-  }
-}
-
-moved {
-  from = kubernetes_ingress_v1.grafana_temporary
-  to   = kubernetes_ingress_v1.grafana
-}
-
 module "ingress_nginx" {
   source = "../../modules/ingress-nginx"
 }
@@ -200,18 +169,15 @@ locals {
 
   small_postgres_resources = {
     requests = {
-      cpu    = "250m"
-      memory = "512Mi"
+      cpu    = "2"
+      memory = "6Gi"
     }
-    limits = {
-      cpu    = "1"
-      memory = "2Gi"
-    }
+    limits = {}
   }
 
   small_postgres_parameters = {
     max_connections    = "500"
-    shared_buffers     = "512MB"
+    shared_buffers     = "2GB"
     synchronous_commit = "off"
   }
 }
@@ -435,9 +401,7 @@ module "frontend_gateway" {
   name             = "frontend-gateway"
   namespace        = each.value.namespace
   create_namespace = false
-  host             = "${each.key}.${var.app_domain_suffix}"
   s3_origin        = var.frontend_s3_endpoint_url
-  s3_host_header   = replace(var.frontend_s3_endpoint_url, "https://", "")
   s3_region        = var.postgres_s3_region
   s3_access_key    = var.frontend_s3_access_key
   s3_secret_key    = var.frontend_s3_secret_key
@@ -490,6 +454,9 @@ module "observability" {
   s3_bucket       = var.observability_loki_s3_bucket
   s3_access_key   = coalesce(var.observability_s3_access_key, var.postgres_s3_access_key)
   s3_secret_key   = coalesce(var.observability_s3_secret_key, var.postgres_s3_secret_key)
+
+  loki_node_selector = local.database_node_affinity.nodeSelector
+  loki_tolerations   = local.database_node_affinity.tolerations
 
   grafana_public_url      = "https://grafana.${var.app_domain_suffix}"
   grafana_public_sub_path = null

@@ -13,8 +13,8 @@ locals {
           Resource = "arn:aws:s3:::${bucket}/*"
         },
         {
-          Sid       = "AllowFrontendPublisherBucketAccess"
-          Effect    = "Allow"
+          Sid    = "AllowFrontendPublisherBucketAccess"
+          Effect = "Allow"
           Principal = {
             AWS = [
               var.frontend_s3_publisher_user_id,
@@ -29,8 +29,8 @@ locals {
           Resource = "arn:aws:s3:::${bucket}"
         },
         {
-          Sid       = "AllowFrontendPublisherObjectAccess"
-          Effect    = "Allow"
+          Sid    = "AllowFrontendPublisherObjectAccess"
+          Effect = "Allow"
           Principal = {
             AWS = [
               var.frontend_s3_publisher_user_id,

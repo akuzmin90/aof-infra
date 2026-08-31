@@ -164,18 +164,6 @@ variable "aof_back_image_repository" {
   default     = "cr.selcloud.ru/aof-registry/aof-back"
 }
 
-variable "aof_back_image_tag" {
-  description = "Container image tag for the initial aof-back Helm releases."
-  type        = string
-  default     = "latest"
-}
-
-variable "aof_back_image_pull_secret_names" {
-  description = "Optional imagePullSecrets used by aof-back pods."
-  type        = list(string)
-  default     = []
-}
-
 variable "registry_server" {
   description = "Container registry server."
   type        = string
