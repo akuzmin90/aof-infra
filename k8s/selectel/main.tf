@@ -74,6 +74,23 @@ resource "kubernetes_storage_class_v1" "universal2_ru_7a" {
   }
 }
 
+resource "kubernetes_storage_class_v1" "basicssd_ru_7a" {
+  metadata {
+    name = "basicssd.ru-7a"
+  }
+
+  storage_provisioner = "cinder.csi.openstack.org"
+  reclaim_policy      = "Delete"
+  volume_binding_mode = "Immediate"
+
+  allow_volume_expansion = true
+
+  parameters = {
+    availability = "ru-7a"
+    type         = "basicssd.ru-7a"
+  }
+}
+
 module "ingress_nginx" {
   source = "../../modules/ingress-nginx"
 }
@@ -123,6 +140,7 @@ locals {
       database_cluster = "aof-release-db"
     }
   }
+  backend_admin_pvc_name = "aof-back-admin"
 
   public_sites_namespace = "public-sites"
   public_sites_backup_s3 = {
@@ -214,6 +232,41 @@ resource "kubernetes_namespace" "app" {
   metadata {
     name = each.value.namespace
   }
+}
+
+resource "kubernetes_persistent_volume_claim_v1" "backend_admin" {
+  for_each = local.app_instances
+
+  metadata {
+    name      = local.backend_admin_pvc_name
+    namespace = each.value.namespace
+
+    labels = {
+      "app.kubernetes.io/name"       = "aof-back"
+      "app.kubernetes.io/instance"   = each.key
+      "app.kubernetes.io/component"  = "admin-storage"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  spec {
+    access_modes       = ["ReadWriteOnce"]
+    storage_class_name = kubernetes_storage_class_v1.basicssd_ru_7a.metadata[0].name
+
+    resources {
+      requests = {
+        storage = "2Gi"
+      }
+    }
+  }
+
+  wait_until_bound = true
+
+  lifecycle {
+    prevent_destroy = true
+  }
+
+  depends_on = [kubernetes_namespace.app]
 }
 
 resource "kubernetes_namespace" "public_sites" {
@@ -659,6 +712,7 @@ module "jenkins" {
 
   backend_job_name         = "aof-back"
   backend_image_repository = var.aof_back_image_repository
+  backend_admin_pvc_name   = local.backend_admin_pvc_name
   app_domain_suffix        = var.app_domain_suffix
   legacy_app_domain_suffix = var.legacy_app_domain_suffix
   registry_server          = var.registry_server

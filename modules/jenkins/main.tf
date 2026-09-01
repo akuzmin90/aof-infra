@@ -23,13 +23,21 @@ locals {
   backend_default_git_branches = {
     dev     = "develop"
     feature = "develop"
-    release = "develop"
+    release = "test"
+  }
+  backend_spring_profiles = {
+    dev     = "tstDev"
+    feature = "tstFea"
+    release = "tstRel"
   }
   frontend_git_branch_map_entries = join(", ", [
     for instance, branch in local.frontend_default_git_branches : "'${instance}': '${branch}'"
   ])
   backend_git_branch_map_entries = join(", ", [
     for instance, branch in local.backend_default_git_branches : "'${instance}': '${branch}'"
+  ])
+  backend_spring_profile_map_entries = join(", ", [
+    for instance, profile in local.backend_spring_profiles : "'${instance}': '${profile}'"
   ])
 
   frontend_job_script = <<-EOT
@@ -234,6 +242,7 @@ locals {
           script('''
             def backRepo = 'https://github.com/akuzmin90/aof-back.git'
             def defaultGitBranches = [${local.backend_git_branch_map_entries}]
+            def springProfiles = [${local.backend_spring_profile_map_entries}]
 
             lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Backend deployment for ' + params.INSTANCE) {
               currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
@@ -349,6 +358,11 @@ ${local.backend_chart_volume_items}
                   gitBranch = defaultGitBranches[params.INSTANCE] ?: params.INSTANCE
                 }
 
+                def springProfile = springProfiles[params.INSTANCE]
+                if (!springProfile) {
+                  error("No Spring profile configured for INSTANCE=" + params.INSTANCE)
+                }
+
                 def deployTimeout = params.DEPLOY_TIMEOUT?.trim()
                 if (!deployTimeout) {
                   deployTimeout = '3h'
@@ -418,6 +432,7 @@ ${local.backend_chart_volume_items}
                     withEnv([
                       "IMAGE_REPOSITORY=${var.backend_image_repository}",
                       "IMAGE_TAG=" + imageTag,
+                      "SPRING_PROFILE=" + springProfile,
                       "NAMESPACE=" + namespace,
                       "HOST=" + host,
                       "LEGACY_HOST=" + legacyHost,
@@ -435,13 +450,20 @@ ${local.backend_chart_volume_items}
                         'kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null',
                         'cat > /tmp/aof-back-values.yaml <<EOF',
                         'fullnameOverride: aof-back',
-                        'springProfile: dev',
+                        'springProfile: $SPRING_PROFILE',
                         'image:',
                         '  repository: $IMAGE_REPOSITORY',
                         '  tag: $IMAGE_TAG',
                         '  pullPolicy: Always',
                         'imagePullSecrets:',
                         '  - name: selectel-registry',
+                        'extraVolumeMounts:',
+                        '  - name: admin-data',
+                        '    mountPath: /admin',
+                        'extraVolumes:',
+                        '  - name: admin-data',
+                        '    persistentVolumeClaim:',
+                        '      claimName: ${var.backend_admin_pvc_name}',
                         'database:',
                         '  url: jdbc:postgresql://$DB_CLUSTER-rw.$NAMESPACE.svc.cluster.local:5432/aof',
                         '  existingSecret: $DB_SECRET',

@@ -80,6 +80,12 @@ variable "backend_image_repository" {
   default     = "cr.selcloud.ru/aof-registry/aof-back"
 }
 
+variable "backend_admin_pvc_name" {
+  description = "Per-instance PVC mounted at /admin by the backend deployment job."
+  type        = string
+  default     = "aof-back-admin"
+}
+
 variable "postgres_s3_endpoint_url" {
   description = "S3-compatible endpoint used by database dump and restore jobs."
   type        = string
