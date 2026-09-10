@@ -384,6 +384,16 @@ Main jobs:
 - `aof-db-dump` - manual logical PostgreSQL dump to S3.
 - `aof-db-restore` - restore logical PostgreSQL dump into selected namespace.
 
+Default Git branches when `GIT_BRANCH` is empty:
+
+| INSTANCE | `aof-front` | `aof-back` |
+|----------|-------------|------------|
+| `dev` | `develop` | `develop` |
+| `feature` | `develop` | `develop` |
+| `release` | `test` | `test` |
+
+Do not use the leftover jobs `aof-front-dev` / `aof-front-feature` / `aof-front-release`. The frontend `release` git branch is frozen and would publish a stale build.
+
 Deployment flow:
 
 ```mermaid
