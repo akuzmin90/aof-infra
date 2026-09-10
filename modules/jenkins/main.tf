@@ -15,10 +15,12 @@ locals {
   frontend_bucket_map_entries = join(", ", [
     for instance, bucket in var.frontend_s3_buckets : "'${instance}': '${bucket}'"
   ])
+  # Matches aof-back: the release stand is fed from `test`.
+  # The aof-front `release` git branch is frozen (v266) and must not be the default.
   frontend_default_git_branches = {
     dev     = "develop"
     feature = "develop"
-    release = "release"
+    release = "test"
   }
   backend_default_git_branches = {
     dev     = "develop"
@@ -174,7 +176,7 @@ locals {
                   checkout([
                     $class: 'GitSCM',
                     branches: [[name: '*/' + gitBranch]],
-                    extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 10]],
+                    extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 40]],
                     userRemoteConfigs: [remoteConfig]
                   ])
                 }
@@ -914,6 +916,9 @@ ${local.backend_chart_volume_items}
     "aof-back-local-k8s",
     "aof-front-selectel-s3",
     "aof-back-selectel-k8s",
+    "aof-front-dev",
+    "aof-front-feature",
+    "aof-front-release",
     "aof-db-dump-selectel-s3",
     "aof-db-restore-selectel-s3",
     "aof-db-dump-manual",
