@@ -392,8 +392,6 @@ Default Git branches when `GIT_BRANCH` is empty:
 | `feature` | `develop` | `develop` |
 | `release` | `test` | `test` |
 
-Do not use the leftover jobs `aof-front-dev` / `aof-front-feature` / `aof-front-release`. The frontend `release` git branch is frozen and would publish a stale build.
-
 Deployment flow:
 
 ```mermaid
