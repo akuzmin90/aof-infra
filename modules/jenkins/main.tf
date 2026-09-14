@@ -484,6 +484,7 @@ ${local.backend_chart_volume_items}
                         '  enabled: true',
                         '  className: nginx',
                         '  annotations:',
+                        '    nginx.ingress.kubernetes.io/proxy-body-size: "16m"',
                         '    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"',
                         '    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"',
                         '    nginx.ingress.kubernetes.io/ssl-redirect: "true"',
