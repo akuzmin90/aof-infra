@@ -18,6 +18,12 @@ locals {
 
   restore_enabled = var.restore_generation > 0
   tls_secret_name = "${var.name}-tls"
+
+  upload_php_ini = var.upload_max_filesize_mb == null ? null : <<-INI
+    upload_max_filesize = ${var.upload_max_filesize_mb}M
+    post_max_size = ${var.upload_max_filesize_mb + 16}M
+    memory_limit = ${max(256, var.upload_max_filesize_mb + 32)}M
+  INI
 }
 
 resource "kubernetes_secret" "database" {
@@ -226,6 +232,20 @@ resource "kubernetes_stateful_set" "database" {
   }
 }
 
+resource "kubernetes_config_map_v1" "wordpress_php" {
+  count = var.upload_max_filesize_mb == null ? 0 : 1
+
+  metadata {
+    name      = "${var.name}-wordpress-php"
+    namespace = var.namespace
+    labels    = local.wordpress_labels
+  }
+
+  data = {
+    "uploads.ini" = local.upload_php_ini
+  }
+}
+
 resource "kubernetes_deployment" "wordpress" {
   metadata {
     name      = "${var.name}-wordpress"
@@ -237,6 +257,10 @@ resource "kubernetes_deployment" "wordpress" {
   spec {
     replicas = 1
 
+    strategy {
+      type = var.wordpress_update_strategy
+    }
+
     selector {
       match_labels = local.wordpress_labels
     }
@@ -244,6 +268,9 @@ resource "kubernetes_deployment" "wordpress" {
     template {
       metadata {
         labels = local.wordpress_labels
+        annotations = var.upload_max_filesize_mb == null ? {} : {
+          "checksum/php-config" = sha256(local.upload_php_ini)
+        }
       }
 
       spec {
@@ -323,6 +350,26 @@ resource "kubernetes_deployment" "wordpress" {
             name       = "files"
             mount_path = "/var/www/html"
           }
+
+          dynamic "volume_mount" {
+            for_each = kubernetes_config_map_v1.wordpress_php
+            content {
+              name       = "php-config"
+              mount_path = "/usr/local/etc/php/conf.d/zz-uploads.ini"
+              sub_path   = "uploads.ini"
+              read_only  = true
+            }
+          }
+        }
+
+        dynamic "volume" {
+          for_each = kubernetes_config_map_v1.wordpress_php
+          content {
+            name = "php-config"
+            config_map {
+              name = volume.value.metadata[0].name
+            }
+          }
         }
 
         volume {
@@ -370,7 +417,7 @@ resource "kubernetes_ingress_v1" "wordpress" {
     labels = local.wordpress_labels
 
     annotations = merge({
-      "nginx.ingress.kubernetes.io/proxy-body-size" = "128m"
+      "nginx.ingress.kubernetes.io/proxy-body-size" = var.upload_max_filesize_mb == null ? "128m" : "${var.upload_max_filesize_mb + 16}m"
       "nginx.ingress.kubernetes.io/ssl-redirect"    = var.tls_enabled ? "true" : "false"
       }, var.tls_enabled ? {
       "cert-manager.io/cluster-issuer" = var.cluster_issuer_name

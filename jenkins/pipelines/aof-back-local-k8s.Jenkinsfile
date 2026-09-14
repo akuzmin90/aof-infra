@@ -92,7 +92,36 @@ spec:
           "NAMESPACE=${params.NAMESPACE}",
           "INGRESS_ENABLED=${params.INGRESS_ENABLED}"
         ]) {
-          sh 'set -eu; DB_PASSWORD=$(kubectl -n database get secret aof-db-app -o jsonpath="{.data.password}" | base64 -d); helm upgrade --install "$RELEASE_NAME" chart --namespace "$NAMESPACE" --create-namespace --set image.repository="$IMAGE_REPOSITORY" --set image.tag="$IMAGE_TAG" --set image.pullPolicy=IfNotPresent --set-string database.password="$DB_PASSWORD" --set ingress.enabled="$INGRESS_ENABLED" --wait --timeout 10m'
+          try {
+            timeout(time: 16, unit: 'MINUTES') {
+              sh 'set +x; set -eu; DB_PASSWORD=$(kubectl -n database get secret aof-db-app -o jsonpath="{.data.password}" | base64 -d); helm upgrade --install "$RELEASE_NAME" chart --namespace "$NAMESPACE" --create-namespace --set image.repository="$IMAGE_REPOSITORY" --set image.tag="$IMAGE_TAG" --set image.pullPolicy=IfNotPresent --set-string database.password="$DB_PASSWORD" --set ingress.enabled="$INGRESS_ENABLED" --wait --timeout 15m'
+            }
+          } catch (Exception deployFailure) {
+            echo 'Deployment failed; collecting Kubernetes diagnostics (maximum 2 minutes).'
+            try {
+              timeout(time: 2, unit: 'MINUTES') {
+                sh([
+                  'set +x',
+                  'SELECTOR="app.kubernetes.io/instance=$RELEASE_NAME"',
+                  'echo "=== Deployment and pod status ==="',
+                  'kubectl --request-timeout=10s -n "$NAMESPACE" get deployments,replicasets,pods -l "$SELECTOR" -o wide || true',
+                  'echo "=== Pod details (scheduling, probes, exits, image pulls) ==="',
+                  'kubectl --request-timeout=10s -n "$NAMESPACE" describe pods -l "$SELECTOR" || true',
+                  'echo "=== Recent namespace events ==="',
+                  'kubectl --request-timeout=10s -n "$NAMESPACE" get events --sort-by=.metadata.creationTimestamp | tail -n 80 || true',
+                  'for pod in $(kubectl --request-timeout=10s -n "$NAMESPACE" get pods -l "$SELECTOR" -o name); do',
+                  '  echo "=== $pod: current container logs ==="',
+                  '  kubectl --request-timeout=10s -n "$NAMESPACE" logs "$pod" --all-containers=true --prefix=true --timestamps=true --tail=200 --pod-running-timeout=5s || true',
+                  '  echo "=== $pod: previous container logs ==="',
+                  '  kubectl --request-timeout=10s -n "$NAMESPACE" logs "$pod" --all-containers=true --prefix=true --timestamps=true --tail=200 --previous --pod-running-timeout=5s || true',
+                  'done'
+                ].join('\n'))
+              }
+            } catch (Exception diagnosticsFailure) {
+              echo 'Diagnostics incomplete: ' + diagnosticsFailure.toString()
+            }
+            throw deployFailure
+          }
         }
       }
     }

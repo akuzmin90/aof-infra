@@ -232,7 +232,14 @@ resource "kubernetes_role_binding" "jenkins_database_jobs" {
   }
 }
 
+moved {
+  from = kubernetes_job_v1.object_store_bootstrap
+  to   = kubernetes_job_v1.object_store_bootstrap[0]
+}
+
 resource "kubernetes_job_v1" "object_store_bootstrap" {
+  count = var.object_store_bootstrap_enabled ? 1 : 0
+
   metadata {
     name      = "${var.name}-postgres-object-store-bootstrap"
     namespace = local.namespace
@@ -269,7 +276,14 @@ resource "kubernetes_job_v1" "object_store_bootstrap" {
   wait_for_completion = true
 }
 
+moved {
+  from = kubernetes_cron_job_v1.logical_backup_to_s3
+  to   = kubernetes_cron_job_v1.logical_backup_to_s3[0]
+}
+
 resource "kubernetes_cron_job_v1" "logical_backup_to_s3" {
+  count = var.logical_backup_enabled ? 1 : 0
+
   metadata {
     name      = "${var.name}-postgres-logical-backup-to-s3"
     namespace = local.namespace

@@ -13,6 +13,28 @@ variable "hosts" {
   type        = list(string)
 }
 
+variable "wordpress_update_strategy" {
+  description = "Deployment update strategy. Use Recreate when the files PVC cannot attach to multiple nodes."
+  type        = string
+  default     = "RollingUpdate"
+
+  validation {
+    condition     = contains(["RollingUpdate", "Recreate"], var.wordpress_update_strategy)
+    error_message = "wordpress_update_strategy must be RollingUpdate or Recreate."
+  }
+}
+
+variable "upload_max_filesize_mb" {
+  description = "Optional PHP file upload limit in MiB. Requests get 16 MiB of multipart overhead allowance."
+  type        = number
+  default     = null
+
+  validation {
+    condition     = var.upload_max_filesize_mb == null ? true : (var.upload_max_filesize_mb > 0 && floor(var.upload_max_filesize_mb) == var.upload_max_filesize_mb)
+    error_message = "upload_max_filesize_mb must be a positive integer or null."
+  }
+}
+
 variable "db_password" {
   description = "MariaDB application user password."
   type        = string

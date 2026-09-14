@@ -154,20 +154,24 @@ locals {
 
   public_sites = {
     l-zazer = {
-      hosts                    = ["l.zazer.mobi"]
-      files_size               = "10Gi"
-      db_size                  = "10Gi"
-      backup_s3_site_prefix    = "l-zazer-mobi"
-      restore_strip_components = 0
-      restore_s3_backup_path   = "l-zazer-mobi/20260617-091610"
+      hosts                     = ["l.zazer.mobi"]
+      upload_max_filesize_mb    = 128
+      wordpress_update_strategy = "Recreate"
+      files_size                = "10Gi"
+      db_size                   = "10Gi"
+      backup_s3_site_prefix     = "l-zazer-mobi"
+      restore_strip_components  = 0
+      restore_s3_backup_path    = "l-zazer-mobi/20260617-091610"
     }
     hitmakers = {
-      hosts                    = ["hitmakers.games", "hitmakers.website"]
-      files_size               = "20Gi"
-      db_size                  = "10Gi"
-      backup_s3_site_prefix    = "hitmakers-copy"
-      restore_strip_components = 1
-      restore_s3_backup_path   = "hitmakers-copy/20260617-091610"
+      hosts                     = ["hitmakers.games", "hitmakers.website"]
+      upload_max_filesize_mb    = null
+      wordpress_update_strategy = "RollingUpdate"
+      files_size                = "20Gi"
+      db_size                   = "10Gi"
+      backup_s3_site_prefix     = "hitmakers-copy"
+      restore_strip_components  = 1
+      restore_s3_backup_path    = "hitmakers-copy/20260617-091610"
     }
   }
 
@@ -398,7 +402,8 @@ module "postgresql_cluster" {
   s3_access_key   = var.postgres_s3_access_key
   s3_secret_key   = var.postgres_s3_secret_key
 
-  enable_jenkins_database_jobs = false
+  enable_jenkins_database_jobs   = false
+  object_store_bootstrap_enabled = false
 
   postgresql_engine  = "postgres"
   postgresql_version = "11"
@@ -434,11 +439,9 @@ module "postgresql_cluster" {
 
   enable_pooler = var.legacy_runtime_services_enabled
 
-  backup_retention_policy = "7d"
-  backup_schedule         = "0 0 2 * * *"
-  # Stand databases are disposable copies of production. Keep the CronJobs
-  # available for ad-hoc testing, but do not run automatic backups.
-  logical_backup_suspend = true
+  # Stand databases are disposable copies of production. Manual Jenkins dump
+  # and restore jobs remain available; no automatic backup objects are needed.
+  logical_backup_enabled = false
 
   depends_on = [
     module.cloudnative_pg_operator,
@@ -474,6 +477,9 @@ module "public_sites" {
   name      = each.key
   namespace = local.public_sites_namespace
   hosts     = each.value.hosts
+
+  upload_max_filesize_mb    = each.value.upload_max_filesize_mb
+  wordpress_update_strategy = each.value.wordpress_update_strategy
 
   db_password      = random_password.wordpress_db[each.key].result
   db_root_password = random_password.wordpress_db_root[each.key].result

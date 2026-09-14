@@ -6,6 +6,7 @@ fullnameOverride: ""
 image:
   repository: aof-back
   tag: local
+  digest: ""
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

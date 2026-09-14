@@ -42,25 +42,57 @@ locals {
     for instance, profile in local.backend_spring_profiles : "'${instance}': '${profile}'"
   ])
 
-  frontend_job_script = <<-EOT
-    pipelineJob('${var.frontend_job_name}') {
+  frontend_jobs = concat([
+    { name = var.frontend_job_name, instance = "", branch = "", poll = false }
+    ], [for instance in ["dev", "feature", "release"] : {
+      name     = "${var.frontend_job_name}-${instance}"
+      instance = instance
+      branch   = local.frontend_default_git_branches[instance]
+      poll     = instance != "feature"
+    } if contains(var.frontend_instances, instance)
+  ])
+  frontend_job_scripts = [for job in local.frontend_jobs : <<-EOT
+    pipelineJob('${job.name}') {
       description('${var.frontend_job_description}')
       keepDependencies(false)
+%{if job.instance != ""~}
+      properties {
+        disableConcurrentBuilds()
+%{if job.poll~}
+        pipelineTriggers {
+          triggers {
+            pollSCM {
+              scmpoll_spec('H */3 * * *')
+              ignorePostCommitHooks(true)
+            }
+          }
+        }
+%{endif~}
+      }
+%{endif~}
+%{if job.instance == "" || job.instance == "feature"~}
       parameters {
+%{if job.instance == ""~}
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Frontend instance and S3 bucket to deploy.')
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
         stringParam('GIT_CREDENTIALS_ID', 'github-aof-token', 'Jenkins credential ID for private Git repositories.')
         stringParam('BUILD_COMMAND', 'npm run build', 'Frontend build command.')
+%{else~}
+        stringParam('GIT_BRANCH', '${job.branch}', 'Git branch to deploy to the feature stand.')
+%{endif~}
       }
+%{endif~}
       definition {
         cps {
           sandbox(true)
           script('''
+            def instance = ${job.instance != "" ? "'${job.instance}'" : "params.INSTANCE"}
+            def gitCredentialsId = ${job.instance != "" ? "'github-aof-token'" : "params.GIT_CREDENTIALS_ID?.trim()"}
             def frontRepo = 'https://github.com/akuzmin90/aof-front.git'
             def frontendBuckets = [${local.frontend_bucket_map_entries}]
             def defaultGitBranches = [${local.frontend_git_branch_map_entries}]
 
-            lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Frontend deployment for ' + params.INSTANCE) {
+            lock(resource: 'aof-stand-' + instance, reason: 'Frontend deployment for ' + instance) {
               currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
               echo 'Requesting a dedicated CI node. Worker fallback is considered only if CI allocation fails for 15 minutes.'
 
@@ -128,12 +160,13 @@ locals {
                       cpu: "250m"
                       memory: 256Mi
             """
-              def workerAgentYaml = ciAgentYaml
-                .replace('workload: ci', 'workload: compute')
-                .replace('cpu: "500m"', 'cpu: "200m"')
-                .replace('cpu: "250m"', 'cpu: "200m"')
-                .replace('cpu: "1"', 'cpu: "600m"')
-                .replace('              containers:', """              initContainers:
+              def workerAgentYaml = """
+            apiVersion: v1
+            kind: Pod
+            spec:
+              nodeSelector:
+                workload: compute
+              initContainers:
                 - name: worker-capacity-reservation
                   image: busybox:1.36.1
                   command:
@@ -145,22 +178,74 @@ locals {
                     limits:
                       cpu: "1"
                       memory: 5Gi
-              containers:""")
-              if (!workerAgentYaml.contains('workload: compute') || !workerAgentYaml.contains('worker-capacity-reservation')) {
+              containers:
+                - name: jnlp
+                  image: jenkins/inbound-agent:latest-jdk21
+                  resources:
+                    requests:
+                      cpu: 50m
+                      memory: 128Mi
+                    limits:
+                      cpu: "200m"
+                      memory: 512Mi
+                - name: node
+                  image: node:18-bookworm
+                  command:
+                    - cat
+                  tty: true
+                  env:
+                    - name: NODE_OPTIONS
+                      value: --max-old-space-size=4096
+                  resources:
+                    requests:
+                      cpu: 250m
+                      memory: 4Gi
+                      ephemeral-storage: 4Gi
+                    limits:
+                      cpu: "600m"
+                      memory: 5Gi
+                      ephemeral-storage: 12Gi
+                - name: mc
+                  image: quay.io/minio/mc:latest
+                  command:
+                    - cat
+                  tty: true
+                  env:
+                    - name: S3_ENDPOINT
+                      value: ${var.frontend_s3_endpoint_url}
+                    - name: S3_ACCESS_KEY
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${local.frontend_s3_secret_name}
+                          key: access-key
+                    - name: S3_SECRET_KEY
+                      valueFrom:
+                        secretKeyRef:
+                          name: ${local.frontend_s3_secret_name}
+                          key: secret-key
+                  resources:
+                    requests:
+                      cpu: 10m
+                      memory: 64Mi
+                    limits:
+                      cpu: "200m"
+                      memory: 256Mi
+            """
+              if (!workerAgentYaml.contains('workload: compute') || !workerAgentYaml.contains('worker-capacity-reservation') || workerAgentYaml.contains('workload: ci')) {
                 error('Internal error while rendering the compute fallback agent')
               }
               def agentLocation = 'CI'
               def executeFrontendBuild = {
                 currentBuild.description = agentLocation + ' agent allocated'
                 echo agentLocation + ' agent is ready; starting the build.'
-                def bucket = frontendBuckets[params.INSTANCE]
-                def gitBranch = params.GIT_BRANCH?.trim()
+                def bucket = frontendBuckets[instance]
+                def gitBranch = ${job.poll ? "'${job.branch}'" : "params.GIT_BRANCH?.trim()"}
                 if (!gitBranch) {
-                  gitBranch = defaultGitBranches[params.INSTANCE] ?: params.INSTANCE
+                  gitBranch = defaultGitBranches[instance] ?: instance
                 }
 
                 if (!bucket) {
-                  error("No frontend S3 bucket configured for INSTANCE=" + params.INSTANCE)
+                  error("No frontend S3 bucket configured for INSTANCE=" + instance)
                 }
 
                 stage('Checkout') {
@@ -169,8 +254,8 @@ locals {
                     refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch
                   ]
 
-                  if (params.GIT_CREDENTIALS_ID?.trim()) {
-                    remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
+                  if (gitCredentialsId) {
+                    remoteConfig.credentialsId = gitCredentialsId
                   }
 
                   checkout([
@@ -184,7 +269,7 @@ locals {
                 stage('Build') {
                   container('node') {
                     sh 'set -eu; if [ -f package-lock.json ]; then npm ci; else npm install; fi'
-                    sh params.BUILD_COMMAND
+                    sh ${job.instance != "" ? "'npm run build'" : "params.BUILD_COMMAND"}
                     sh 'set -eu; INDEX_FILE=$(find dist -maxdepth 1 -type f -name "index*.html" ! -name "index.html" | sort | tail -n 1); if [ -z "$INDEX_FILE" ]; then echo "No versioned index*.html found in dist"; exit 1; fi; cp "$INDEX_FILE" dist/index.html; echo "Created stable index.html from $(basename "$INDEX_FILE")"'
                   }
                 }
@@ -226,324 +311,138 @@ locals {
       }
     }
   EOT
+  ]
 
-  backend_job_script = <<-EOT
-    pipelineJob('${var.backend_job_name}') {
+  backend_tools_data = { for name in setunion(fileset("${path.module}/backend", "*.sh"), fileset("${path.module}/backend", "*.jq")) : name => file("${path.module}/backend/${name}") }
+  backend_tools_name = "aof-back-ci-${substr(sha256(jsonencode(local.backend_tools_data)), 0, 12)}"
+  backend_agent_yaml = { for pool in ["ci", "compute"] : pool => yamlencode({
+    apiVersion = "v1"
+    kind       = "Pod"
+    spec = merge({
+      nodeSelector = { workload = pool }
+      containers = [
+        {
+          name  = "jnlp"
+          image = "jenkins/inbound-agent:latest-jdk21"
+          resources = {
+            requests = { cpu = "50m", memory = "128Mi" }
+            limits   = { cpu = pool == "ci" ? "500m" : "200m", memory = "512Mi" }
+          }
+        },
+        {
+          name    = "kaniko"
+          image   = "gcr.io/kaniko-project/executor:v1.23.2-debug"
+          command = ["cat"]
+          tty     = true
+          env = [for entry in [{ name = "REGISTRY_SERVER", key = "server" }, { name = "REGISTRY_USERNAME", key = "username" }, { name = "REGISTRY_PASSWORD", key = "password" }] : {
+            name      = entry.name
+            valueFrom = { secretKeyRef = { name = local.registry_secret_name, key = entry.key } }
+          }]
+          volumeMounts = [{ name = "kaniko-docker-config", mountPath = "/kaniko/.docker" }, { name = "ci-tools", mountPath = "/ci-scripts", readOnly = true }]
+          resources = {
+            requests = { cpu = "250m", memory = "3Gi", ephemeral-storage = "4Gi" }
+            limits   = { cpu = pool == "ci" ? "2" : "600m", memory = "4Gi", ephemeral-storage = "12Gi" }
+          }
+        },
+        {
+          name         = "helm"
+          image        = "dtzar/helm-kubectl:3.16.4"
+          command      = ["cat"]
+          tty          = true
+          volumeMounts = [{ name = "backend-chart", mountPath = "/charts/aof-back", readOnly = true }, { name = "ci-tools", mountPath = "/ci-scripts", readOnly = true }]
+          resources = {
+            requests = { cpu = "50m", memory = "128Mi" }
+            limits   = { cpu = pool == "ci" ? "500m" : "200m", memory = "512Mi" }
+          }
+        }
+      ]
+      volumes = [
+        { name = "kaniko-docker-config", emptyDir = {} },
+        { name = "ci-tools", configMap = { name = local.backend_tools_name } },
+        { name = "backend-chart", configMap = { name = local.backend_chart_name, items = [for name in local.backend_chart_files : { key = replace(name, "/", "__"), path = name }] } }
+      ]
+      }, pool == "ci" ? {
+      tolerations = [{ key = "dedicated", operator = "Equal", value = "ci", effect = "NoSchedule" }]
+      } : {}, pool == "compute" ? {
+      initContainers = [{ name = "worker-capacity-reservation", image = "busybox:1.36.1", command = ["/bin/true"], resources = { requests = { cpu = "1", memory = "5Gi" }, limits = { cpu = "1", memory = "5Gi" } } }]
+    } : {})
+  }) }
+
+  # Each polling job needs its own checkout history and fixed branch. Keep the
+  # parameterized job for manual deployments to any configured instance.
+  backend_jobs = concat([
+    {
+      name      = var.backend_job_name
+      instances = var.frontend_instances
+      branch    = ""
+      poll      = false
+    }
+    ], [
+    for instance in ["dev", "feature", "release"] : {
+      name      = "${var.backend_job_name}-${instance}"
+      instances = [instance]
+      branch    = local.backend_default_git_branches[instance]
+      poll      = instance != "feature"
+    } if contains(var.frontend_instances, instance)
+  ])
+
+  backend_job_scripts = [for job in local.backend_jobs : <<-EOT
+    pipelineJob('${job.name}') {
       description('Builds aof-back from the selected branch, pushes the image, and deploys the same instance with Helm.')
       keepDependencies(false)
+      logRotator { artifactDaysToKeep(14); artifactNumToKeep(20) }
+
+%{if job.branch != ""~}
+      properties {
+        disableConcurrentBuilds()
+        pipelineTriggers {
+          triggers {
+%{if job.poll~}
+            pollSCM {
+              scmpoll_spec('H */3 * * *')
+              ignorePostCommitHooks(true)
+            }
+%{endif~}
+          }
+        }
+      }
+%{endif~}
       parameters {
-        choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Backend instance and Kubernetes namespace to deploy.')
+%{if job.branch == ""~}
+        choiceParam('INSTANCE', ${jsonencode(job.instances)}, 'Backend instance and Kubernetes namespace to deploy.')
         stringParam('GIT_BRANCH', '', 'Optional Git branch override. Empty uses the default branch for the selected instance.')
         stringParam('GIT_CREDENTIALS_ID', 'github-aof-token', 'Jenkins credential ID for private Git repositories.')
-        stringParam('IMAGE_TAG', '', 'Optional image tag. Empty means BRANCH-build_number.')
-        stringParam('DEPLOY_TIMEOUT', '3h', 'Helm deployment timeout. Use a Go duration such as 45m, 60m, or 3h.')
+        stringParam('IMAGE_TAG', '', 'Optional image tag. Empty means INSTANCE-build_number-commit.')
+%{endif~}
+%{if job.branch != "" && job.instances[0] == "feature"~}
+        stringParam('GIT_BRANCH', '${job.branch}', 'Git branch to deploy to the feature stand.')
+%{endif~}
+        stringParam('DEPLOY_TIMEOUT', '15m', 'Helm deployment timeout, for example 15m or 30m. Failed deployments retain pods for diagnostics; no automatic rollback.')
       }
       definition {
         cps {
           sandbox(true)
-          script('''
-            def backRepo = 'https://github.com/akuzmin90/aof-back.git'
-            def defaultGitBranches = [${local.backend_git_branch_map_entries}]
-            def springProfiles = [${local.backend_spring_profile_map_entries}]
-
-            lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Backend deployment for ' + params.INSTANCE) {
-              currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
-              echo 'Requesting a dedicated CI node. Worker fallback is considered only if CI allocation fails for 15 minutes.'
-
-              def ciAgentYaml = """
-            apiVersion: v1
-            kind: Pod
-            spec:
-              nodeSelector:
-                workload: ci
-              tolerations:
-                - key: dedicated
-                  operator: Equal
-                  value: ci
-                  effect: NoSchedule
-              containers:
-                - name: jnlp
-                  image: jenkins/inbound-agent:latest-jdk21
-                  resources:
-                    requests:
-                      cpu: 50m
-                      memory: 128Mi
-                    limits:
-                      cpu: "500m"
-                      memory: 512Mi
-                - name: kaniko
-                  image: gcr.io/kaniko-project/executor:v1.23.2-debug
-                  command:
-                    - cat
-                  tty: true
-                  env:
-                    - name: REGISTRY_SERVER
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.registry_secret_name}
-                          key: server
-                    - name: REGISTRY_USERNAME
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.registry_secret_name}
-                          key: username
-                    - name: REGISTRY_PASSWORD
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.registry_secret_name}
-                          key: password
-                  volumeMounts:
-                    - name: kaniko-docker-config
-                      mountPath: /kaniko/.docker
-                  resources:
-                    requests:
-                      cpu: 250m
-                      memory: 3Gi
-                      ephemeral-storage: 4Gi
-                    limits:
-                      cpu: "2"
-                      memory: 4Gi
-                      ephemeral-storage: 12Gi
-                - name: helm
-                  image: dtzar/helm-kubectl:3.16.4
-                  command:
-                    - cat
-                  tty: true
-                  volumeMounts:
-                    - name: backend-chart
-                      mountPath: /charts/aof-back
-                      readOnly: true
-                  resources:
-                    requests:
-                      cpu: 50m
-                      memory: 128Mi
-                    limits:
-                      cpu: "500m"
-                      memory: 512Mi
-              volumes:
-                - name: kaniko-docker-config
-                  emptyDir: {}
-                - name: backend-chart
-                  configMap:
-                    name: ${local.backend_chart_name}
-                    items:
-${local.backend_chart_volume_items}
-            """
-              def workerAgentYaml = ciAgentYaml
-                .replace('workload: ci', 'workload: compute')
-                .replace('cpu: "500m"', 'cpu: "200m"')
-                .replace('cpu: "2"', 'cpu: "600m"')
-                .replace('              containers:', """              initContainers:
-                - name: worker-capacity-reservation
-                  image: busybox:1.36.1
-                  command:
-                    - /bin/true
-                  resources:
-                    requests:
-                      cpu: "1"
-                      memory: 5Gi
-                    limits:
-                      cpu: "1"
-                      memory: 5Gi
-              containers:""")
-              if (!workerAgentYaml.contains('workload: compute') || !workerAgentYaml.contains('worker-capacity-reservation')) {
-                error('Internal error while rendering the compute fallback agent')
-              }
-              def agentLocation = 'CI'
-              def executeBackendBuild = {
-                currentBuild.description = agentLocation + ' agent allocated'
-                echo agentLocation + ' agent is ready; starting the build.'
-                def imageTag = params.IMAGE_TAG?.trim()
-
-                def gitBranch = params.GIT_BRANCH?.trim()
-                if (!gitBranch) {
-                  gitBranch = defaultGitBranches[params.INSTANCE] ?: params.INSTANCE
-                }
-
-                def springProfile = springProfiles[params.INSTANCE]
-                if (!springProfile) {
-                  error("No Spring profile configured for INSTANCE=" + params.INSTANCE)
-                }
-
-                def deployTimeout = params.DEPLOY_TIMEOUT?.trim()
-                if (!deployTimeout) {
-                  deployTimeout = '3h'
-                }
-
-                if (!(deployTimeout ==~ /^[1-9][0-9]*[smh]$/)) {
-                  error('DEPLOY_TIMEOUT must be a positive Go duration using s, m, or h, for example 45m, 60m, or 3h')
-                }
-
-                def timeoutAmount = deployTimeout.substring(0, deployTimeout.length() - 1).toInteger()
-                def timeoutUnit = deployTimeout.substring(deployTimeout.length() - 1)
-                def timeoutSeconds = timeoutAmount * [s: 1, m: 60, h: 3600][timeoutUnit]
-                def startupFailureThreshold = Math.ceil((timeoutSeconds + 900) / 5.0d).toInteger()
-
-                def namespace = 'aof-' + params.INSTANCE
-                def host = params.INSTANCE + '.${var.app_domain_suffix}'
-                def legacyHost = params.INSTANCE + '.${var.legacy_app_domain_suffix}'
-                def dbCluster = 'aof-' + params.INSTANCE + '-db'
-                def tlsSecret = params.INSTANCE + '-k8s-zazer-fun-tls'
-                def legacyTlsSecret = params.INSTANCE + '-zazer-fun-tls'
-                def backendMemoryRequest = params.INSTANCE == 'dev' ? '1Gi' : '768Mi'
-                def backendMemoryLimit = params.INSTANCE == 'dev' ? '2Gi' : '1536Mi'
-
-                stage('Checkout') {
-                  def remoteConfig = [
-                    url: backRepo,
-                    refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch
-                  ]
-
-                  if (params.GIT_CREDENTIALS_ID?.trim()) {
-                    remoteConfig.credentialsId = params.GIT_CREDENTIALS_ID.trim()
-                  }
-
-                  def checkoutResult = checkout([
-                    $class: 'GitSCM',
-                    branches: [[name: '*/' + gitBranch]],
-                    extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 10]],
-                    userRemoteConfigs: [remoteConfig]
-                  ])
-
-                  if (!imageTag) {
-                    def gitCommit = checkoutResult.GIT_COMMIT?.trim()
-                    if (!gitCommit) {
-                      error('Checkout did not return GIT_COMMIT; refusing to create a mutable default image tag')
-                    }
-                    imageTag = (params.INSTANCE + '-' + env.BUILD_NUMBER + '-' + gitCommit.take(12)).replaceAll('[^A-Za-z0-9_.-]', '-')
-                  }
-
-                  currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + params.INSTANCE + ' ' + gitBranch + ' ' + imageTag
-                }
-
-                stage('Build and Push Image') {
-                  container('kaniko') {
-                    withEnv([
-                      "IMAGE_REPOSITORY=${var.backend_image_repository}",
-                      "IMAGE_TAG=" + imageTag,
-                      "JAVA_VERSION=17"
-                    ]) {
-                      sh 'set -eu; AUTH=$(printf "%s:%s" "$REGISTRY_USERNAME" "$REGISTRY_PASSWORD" | base64); FORMAT=$(printf %s eyJhdXRocyI6eyIlcyI6eyJhdXRoIjoiJXMifX19Cg== | base64 -d); printf "$FORMAT" "$REGISTRY_SERVER" "$AUTH" > /kaniko/.docker/config.json'
-                      sh 'set -eu; /kaniko/executor --context "$WORKSPACE" --dockerfile "$WORKSPACE/Dockerfile" --destination "$IMAGE_REPOSITORY:$IMAGE_TAG" --build-arg "JAVA_VERSION=$JAVA_VERSION" --cache=true'
-                    }
-                  }
-                }
-
-                stage('Deploy') {
-                  container('helm') {
-                    withEnv([
-                      "IMAGE_REPOSITORY=${var.backend_image_repository}",
-                      "IMAGE_TAG=" + imageTag,
-                      "SPRING_PROFILE=" + springProfile,
-                      "NAMESPACE=" + namespace,
-                      "HOST=" + host,
-                      "LEGACY_HOST=" + legacyHost,
-                      "DB_CLUSTER=" + dbCluster,
-                      "TLS_SECRET=" + tlsSecret,
-                      "LEGACY_TLS_SECRET=" + legacyTlsSecret,
-                      "BACKEND_MEMORY_REQUEST=" + backendMemoryRequest,
-                      "BACKEND_MEMORY_LIMIT=" + backendMemoryLimit,
-                      "DEPLOY_TIMEOUT=" + deployTimeout
-                    ]) {
-                      sh([
-                        'set -eu',
-                        'kubectl get namespace "$NAMESPACE" >/dev/null',
-                        'DB_SECRET="$DB_CLUSTER-app"',
-                        'kubectl -n "$NAMESPACE" get secret "$DB_SECRET" >/dev/null',
-                        'cat > /tmp/aof-back-values.yaml <<EOF',
-                        'fullnameOverride: aof-back',
-                        'springProfile: $SPRING_PROFILE',
-                        'image:',
-                        '  repository: $IMAGE_REPOSITORY',
-                        '  tag: $IMAGE_TAG',
-                        '  pullPolicy: Always',
-                        'imagePullSecrets:',
-                        '  - name: selectel-registry',
-                        'extraVolumeMounts:',
-                        '  - name: admin-data',
-                        '    mountPath: /admin',
-                        'extraVolumes:',
-                        '  - name: admin-data',
-                        '    persistentVolumeClaim:',
-                        '      claimName: ${var.backend_admin_pvc_name}',
-                        'database:',
-                        '  url: jdbc:postgresql://$DB_CLUSTER-rw.$NAMESPACE.svc.cluster.local:5432/aof',
-                        '  existingSecret: $DB_SECRET',
-                        'resources:',
-                        '  requests:',
-                        '    cpu: 200m',
-                        '    memory: $BACKEND_MEMORY_REQUEST',
-                        '  limits:',
-                        '    cpu: "2"',
-                        '    memory: $BACKEND_MEMORY_LIMIT',
-                        'startupProbe:',
-                        '  failureThreshold: ' + startupFailureThreshold,
-                        '  periodSeconds: 5',
-                        '  timeoutSeconds: 3',
-                        'ingress:',
-                        '  enabled: true',
-                        '  className: nginx',
-                        '  annotations:',
-                        '    nginx.ingress.kubernetes.io/proxy-body-size: "16m"',
-                        '    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"',
-                        '    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"',
-                        '    nginx.ingress.kubernetes.io/ssl-redirect: "true"',
-                        '  hosts:',
-                        '    - host: $HOST',
-                        '      paths:',
-                        '        - path: /api',
-                        '          pathType: Prefix',
-                        '    - host: $LEGACY_HOST',
-                        '      paths:',
-                        '        - path: /api',
-                        '          pathType: Prefix',
-                        '  tls:',
-                        '    - secretName: $TLS_SECRET',
-                        '      hosts:',
-                        '        - $HOST',
-                        '    - secretName: $LEGACY_TLS_SECRET',
-                        '      hosts:',
-                        '        - $LEGACY_HOST',
-                        'EOF',
-                        'helm lint /charts/aof-back -f /tmp/aof-back-values.yaml',
-                        'helm template aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml > /tmp/aof-back-rendered.yaml',
-                        'helm upgrade --install aof-back /charts/aof-back --namespace "$NAMESPACE" -f /tmp/aof-back-values.yaml --atomic --wait --timeout "$DEPLOY_TIMEOUT"'
-                      ].join('\\n'))
-                    }
-                  }
-                }
-              }
-
-              def ciAgentAllocated = false
-              try {
-                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 900, yaml: ciAgentYaml) {
-                  node(POD_LABEL) {
-                    ciAgentAllocated = true
-                    executeBackendBuild()
-                  }
-                }
-              } catch (Exception ciAllocationFailure) {
-                if (ciAgentAllocated) {
-                  throw ciAllocationFailure
-                }
-
-                agentLocation = 'compute fallback'
-                currentBuild.description = 'CI allocation failed; waiting for safe worker capacity'
-                echo 'No CI agent connected within 15 minutes. Trying a compute worker with a 1 CPU / 5 GiB scheduling reservation.'
-                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 600, yaml: workerAgentYaml) {
-                  node(POD_LABEL) {
-                    executeBackendBuild()
-                  }
-                }
-              }
-            }
-          ''')
+          script(new String('${base64encode(templatefile("${path.module}/backend/pipeline.groovy.tftpl", {
+    instance_expression    = job.branch != "" ? "'${job.instances[0]}'" : "params.INSTANCE"
+    branch_expression      = job.branch != "" && job.instances[0] != "feature" ? "'${job.branch}'" : "params.GIT_BRANCH?.trim()"
+    credentials_expression = job.branch != "" ? "'github-aof-token'" : "params.GIT_CREDENTIALS_ID?.trim()"
+    tag_expression         = job.branch != "" ? "''" : "params.IMAGE_TAG?.trim()"
+    branch_entries         = local.backend_git_branch_map_entries
+    profile_entries        = local.backend_spring_profile_map_entries
+    ci_yaml                = local.backend_agent_yaml["ci"]
+    worker_yaml            = local.backend_agent_yaml["compute"]
+    image_repository       = var.backend_image_repository
+    domain                 = var.app_domain_suffix
+    legacy_domain          = var.legacy_app_domain_suffix
+    admin_pvc              = var.backend_admin_pvc_name
+}))}'.decodeBase64(), 'UTF-8'))
         }
       }
     }
   EOT
+]
 
-  database_dump_job_script = <<-EOT
+database_dump_job_script = <<-EOT
     pipelineJob('aof-db-dump') {
       description('Creates a manual PostgreSQL dump for the selected AOF instance and uploads it to S3.')
       keepDependencies(false)
@@ -643,7 +542,7 @@ ${local.backend_chart_volume_items}
     }
   EOT
 
-  database_restore_script = <<-SCRIPT
+database_restore_script = <<-SCRIPT
     #!/usr/bin/env bash
     set -Eeuo pipefail
     set +x
@@ -740,7 +639,7 @@ ${local.backend_chart_volume_items}
     fi
   SCRIPT
 
-  database_restore_job_script = <<-EOT
+database_restore_job_script = <<-EOT
     pipelineJob('aof-db-restore') {
       description('Restores a PostgreSQL dump from S3 into the selected AOF instance database.')
       keepDependencies(false)
@@ -912,29 +811,27 @@ ${local.backend_chart_volume_items}
     }
   EOT
 
-  stale_job_names = [
-    "aof-front-local-s3",
-    "aof-back-local-k8s",
-    "aof-front-selectel-s3",
-    "aof-back-selectel-k8s",
-    "aof-db-dump-selectel-s3",
-    "aof-db-restore-selectel-s3",
-    "aof-db-dump-manual",
-    "aof-db-restore-dev",
-    "aof-db-dev-dump-manual",
-    "aof-db-dev-restore-dev",
-    "aof-db-feature-dump-manual",
-    "aof-db-feature-restore-dev",
-    "aof-db-release-dump-manual",
-    "aof-db-release-restore-dev"
-  ]
+stale_job_names = [
+  "aof-front-local-s3",
+  "aof-back-local-k8s",
+  "aof-front-selectel-s3",
+  "aof-back-selectel-k8s",
+  "aof-db-dump-selectel-s3",
+  "aof-db-restore-selectel-s3",
+  "aof-db-dump-manual",
+  "aof-db-restore-dev",
+  "aof-db-dev-dump-manual",
+  "aof-db-dev-restore-dev",
+  "aof-db-feature-dump-manual",
+  "aof-db-feature-restore-dev",
+  "aof-db-release-dump-manual",
+  "aof-db-release-restore-dev"
+]
 
-  job_scripts = concat([
-    local.frontend_job_script,
-    local.backend_job_script,
-    local.database_dump_job_script,
-    local.database_restore_job_script
-  ], var.extra_job_scripts)
+job_scripts = concat([
+  local.database_dump_job_script,
+  local.database_restore_job_script
+], local.frontend_job_scripts, local.backend_job_scripts, var.extra_job_scripts)
 }
 
 resource "kubernetes_namespace" "jenkins" {
@@ -981,6 +878,17 @@ resource "kubernetes_config_map" "backend_chart" {
   data = local.backend_chart_data
 }
 
+resource "kubernetes_config_map" "backend_tools" {
+  lifecycle {
+    create_before_destroy = true
+  }
+  metadata {
+    name      = local.backend_tools_name
+    namespace = kubernetes_namespace.jenkins.metadata[0].name
+  }
+  data = local.backend_tools_data
+}
+
 resource "kubernetes_config_map" "database_restore_script" {
   metadata {
     name      = "aof-db-restore-script"
@@ -993,6 +901,8 @@ resource "kubernetes_config_map" "database_restore_script" {
 }
 
 resource "helm_release" "jenkins" {
+  depends_on = [kubernetes_config_map.backend_tools]
+
   name       = "jenkins"
   namespace  = kubernetes_namespace.jenkins.metadata[0].name
   repository = "https://charts.jenkins.io"
@@ -1003,6 +913,31 @@ resource "helm_release" "jenkins" {
     yamlencode({
       controller = {
         initScripts = {
+          "backend-console-filter" = <<-SCRIPT
+            import jenkins.model.Jenkins
+            def jenkins = Jenkins.get()
+            System.setProperty('aof.backendJobName', '${var.backend_job_name}')
+            if (jenkins.pluginManager.getPlugin('aof-backend-console') == null) {
+              def pluginFile = new File(jenkins.rootDir, 'plugins/aof-backend-console.jpi')
+              pluginFile.bytes = '${filebase64("${path.module}/console-filter/aof-backend-console.hpi")}'.decodeBase64()
+              jenkins.pluginManager.dynamicLoad(pluginFile)
+              println('Installed scoped AOF backend console formatter')
+            }
+          SCRIPT
+
+          "backend-console-view" = <<-SCRIPT
+            import jenkins.model.Jenkins
+            def jenkins = Jenkins.get()
+            def pluginFile = new File(jenkins.rootDir, 'plugins/aof-backend-console-view.jpi')
+            pluginFile.bytes = '${filebase64("${path.module}/console-view/aof-backend-console-view.hpi")}'.decodeBase64()
+            if (jenkins.pluginManager.getPlugin('aof-backend-console-view') == null) {
+              jenkins.pluginManager.dynamicLoad(pluginFile)
+            }
+            // Static UI updates can be served immediately; the Java extension is unchanged.
+            def asset = new File(jenkins.rootDir, 'plugins/aof-backend-console-view/console.js')
+            asset.bytes = '${filebase64("${path.module}/console-view/web/console.js")}'.decodeBase64()
+          SCRIPT
+
           "delete-stale-aof-jobs" = <<-SCRIPT
             import jenkins.model.Jenkins
 
@@ -1136,6 +1071,12 @@ resource "kubernetes_cluster_role" "jenkins_deployer" {
     api_groups = [""]
     resources  = ["namespaces", "services", "secrets", "configmaps", "serviceaccounts", "pods", "events"]
     verbs      = ["get", "list", "watch", "create", "update", "patch", "delete"]
+  }
+
+  rule {
+    api_groups = [""]
+    resources  = ["pods/log"]
+    verbs      = ["get"]
   }
 
   rule {

@@ -1,0 +1,4 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core">
+  <script defer="defer" src="${rootURL}/plugin/aof-backend-console-view/console.js" data-backend-job="${it.backendJobName}"></script>
+</j:jelly>

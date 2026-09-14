@@ -379,8 +379,14 @@ tofu output -raw jenkins_admin_password
 
 Main jobs:
 
-- `aof-front` - build frontend and upload to S3.
+- `aof-front` - manually build frontend and upload to the selected S3 bucket; existing history retained.
+- `aof-front-dev` - poll `develop` every three hours and deploy to dev.
+- `aof-front-feature` - manually deploy a selected branch (default `develop`) to feature.
+- `aof-front-release` - poll `release` every three hours and deploy to release.
 - `aof-back` - build backend image and deploy to selected namespace.
+- `aof-back-dev` - poll and deploy backend `develop` to dev.
+- `aof-back-feature` - manually deploy a developer-selected backend branch to feature (default `develop`).
+- `aof-back-release` - poll and deploy backend `test` to release.
 - `aof-db-dump` - manual logical PostgreSQL dump to S3.
 - `aof-db-restore` - restore logical PostgreSQL dump into selected namespace.
 
@@ -391,6 +397,84 @@ Default Git branches when `GIT_BRANCH` is empty:
 | `dev` | `develop` | `develop` |
 | `feature` | `develop` | `develop` |
 | `release` | `test` | `test` |
+
+The dev and release backend jobs use **Triggers → Poll SCM** with
+`H */3 * * *`: every three hours, at a stable Jenkins-selected minute. After the
+initial build establishes Git history, polling schedules builds only for new
+commits. **Build periodically** is not enabled. Polling jobs are created only
+for stands enabled in the module's instance list. Each job pins its stand and
+branch in the pipeline; the original `aof-back` job and its history are retained.
+Dev and release expose only `DEPLOY_TIMEOUT`; feature also exposes `GIT_BRANCH`. Git credentials are configured
+in the pipeline, and image tags are generated from the stand, build number, and
+commit. The original manual job retains its stand, branch, credentials, and image
+tag overrides.
+
+Feature has no automatic trigger and runs only when started manually.
+All three stand-specific jobs disable concurrent builds. If changes arrive while it is
+running, Jenkins queues a build until the active build finishes. The shared
+stand lock also makes it wait for manual deployments and database restores,
+before allocating an agent. This preserves pending changes without overlapping
+work on the same stand. Dev, feature, and release can run independently.
+
+Apply the Jenkins module to install the generated jobs. Each new polling job
+needs an initial build to establish its checkout history (the first poll can
+start it); it can also be started manually with **Build with Parameters**.
+Check **Polling Log** in each job to inspect subsequent Git checks.
+
+Backend deployments default to `DEPLOY_TIMEOUT=15m`; increase this explicitly
+for known slow migrations. Jenkins caps the deploy step at that timeout plus one
+minute, then allows at most two minutes for failure diagnostics. A Helm error
+fails the build even if diagnostics also fail. The console includes pod status
+and details, recent namespace events, and the last 200 lines of current and
+previous logs from each pod's containers.
+
+Backend pipeline code lives in `modules/jenkins/backend/pipeline.groovy.tftpl`;
+build, deployment, and diagnostic scripts live alongside it. OpenTofu renders
+both CI and compute agent YAML from structured objects. Scripts are mounted from
+a content-addressed ConfigMap and copied into the build workspace before use.
+Apply tooling updates while backend jobs are idle; retain older tooling ConfigMaps
+while a queued or running build still references them.
+
+Allocation has a 15-minute CI deadline and a 10-minute compute fallback deadline;
+checkout allows 10 minutes, and image build/push allows 45 minutes. Explicit user
+cancellation does not start a fallback build. The stand lock covers the entire run.
+Only idempotent preflight reads and registry transfers have bounded retries; Helm
+upgrade and database migrations are never automatically retried.
+
+The console shows build milestones and rollout status every 15 seconds. The
+scoped `aof-backend-console` helper condenses repeated Kubernetes plugin messages
+and routine Git command echoes only for backend jobs. Raw agent YAML is disabled.
+Full image-build output, Helm output, and failure diagnostics are archived under
+`ci-logs/`, retained for up to 14 days / 20 builds without deleting build history.
+Log and digest files are readable by the Jenkins agent across containers, while
+registry authentication files remain private and are removed on exit. Cluster
+access uses an explicit service-account tokenFile configuration so kubectl request
+timeouts cannot accidentally switch it to localhost.
+Registry authentication commands are never echoed; rendered manifests are private
+temporary files and are not archived.
+
+Deployment uses the digest produced by Kaniko, not a tag lookup. Each pod template
+is marked with the job/build identity. The monitor checks the observed deployment
+generation, owned ReplicaSet revision, and pod ownership before making decisions.
+It fails early on CrashLoopBackOff, 3 container restarts, invalid image/configuration,
+OOMKilled, failed pods, or image-pull failures persisting for 60 seconds. Slow
+readiness alone retains the configured deployment deadline. Events are deduplicated
+and scoped to the new pods. Helm success also requires final new-revision readiness.
+Cancellation and failure terminate the Helm process group and bound diagnostics.
+A pending Helm release is reported for operator review; its metadata is never deleted
+or automatically unlocked.
+
+Run script regression checks with
+`python3 -m unittest discover -s modules/jenkins/tests -v` (requires Bash and jq).
+The console helper's source, build instructions, and test are in
+`modules/jenkins/console-filter/`.
+
+The backend job does not use Helm's automatic rollback: failed resources remain
+available for inspection. After fixing the cause, redeploy or manually roll back
+to a known good revision. Apply the Jenkins module changes to update both the
+generated job and its `pods/log` read permission. Builds started with an explicit
+or previously saved `DEPLOY_TIMEOUT=3h` still use that value; select `15m` to use
+the new default.
 
 Deployment flow:
 
@@ -443,3 +527,18 @@ Especially sensitive resources:
 - S3 buckets;
 - Secrets used by databases and backups;
 - Grafana and Jenkins PVCs.
+
+Backend console pages always use a compact view without a details toggle.
+Pipeline steps, branch prefixes and routine worker/checkout notices are hidden. This also applies when viewing historical builds; raw `consoleText`
+and archived logs are unchanged. New builds print shorter rollout summaries on
+state changes and at least every 30 seconds while waiting; health checks still
+run every 15 seconds. The backend console view plugin installs dynamically on
+first use without restarting Jenkins. Its source and DOM regression test are in
+`modules/jenkins/console-view`.
+
+Dedicated frontend jobs pin their stand, S3 bucket mapping, credentials, and
+`npm run build` command. Feature exposes only `GIT_BRANCH`; dev and release need
+no parameters. Dev and release use Poll SCM (`H */3 * * *`), which needs an initial
+checkout/build to establish SCM history. All dedicated frontend jobs disable
+concurrent builds and use the existing shared stand lock. The original manual
+`aof-front` job retains its parameters and history.

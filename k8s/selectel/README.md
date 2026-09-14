@@ -298,6 +298,17 @@ Sites:
 | `l-zazer` | `l.zazer.mobi` | landing WordPress site |
 | `hitmakers` | `hitmakers.games`, `hitmakers.website` | official public site |
 
+The `l-zazer` landing accepts files up to 128 MiB. Its PHP ConfigMap sets
+`upload_max_filesize=128M`, `post_max_size=144M`, and `memory_limit=256M`;
+the ingress allows 144 MiB requests to leave room for multipart overhead.
+The ConfigMap is mounted at `/usr/local/etc/php/conf.d/zz-uploads.ini`, and
+a checksum in the pod template triggers a rollout when it changes.
+Configure this through `upload_max_filesize_mb` in the public site map.
+Other sites retain the image's PHP defaults when this value is null.
+The landing uses `wordpress_update_strategy = "Recreate"` because its files
+PVC cannot attach to multiple nodes. Updates briefly interrupt service while
+the old pod stops and the replacement attaches the disk.
+
 Resources per site:
 
 - MariaDB StatefulSet and PVC;

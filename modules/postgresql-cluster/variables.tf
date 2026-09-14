@@ -90,6 +90,12 @@ variable "enable_jenkins_database_jobs" {
   default     = false
 }
 
+variable "object_store_bootstrap_enabled" {
+  description = "Create a one-shot Job that ensures the configured backup and dump buckets exist."
+  type        = bool
+  default     = true
+}
+
 variable "cluster_instances" {
   description = "Number of PostgreSQL instances."
   type        = number
@@ -228,6 +234,12 @@ variable "logical_backup_schedule" {
   description = "Kubernetes CronJob schedule for automatic logical pg_dump backups, in Europe/Moscow time."
   type        = string
   default     = "10 3 * * *"
+}
+
+variable "logical_backup_enabled" {
+  description = "Create the automatic logical pg_dump CronJob. Manual Jenkins dump and restore jobs are independent of this setting."
+  type        = bool
+  default     = true
 }
 
 variable "logical_backup_suspend" {
