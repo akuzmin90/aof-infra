@@ -93,6 +93,18 @@ resource "kubernetes_storage_class_v1" "basicssd_ru_7a" {
 
 module "ingress_nginx" {
   source = "../../modules/ingress-nginx"
+
+  values = [yamlencode({
+    controller = {
+      service = {
+        annotations = {
+          # Allow XML reloads to finish within the backend ingress's 300s timeout.
+          "loadbalancer.openstack.org/timeout-client-data" = "300000"
+          "loadbalancer.openstack.org/timeout-member-data" = "300000"
+        }
+      }
+    }
+  })]
 }
 
 module "cert_manager" {
