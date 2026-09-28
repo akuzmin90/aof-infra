@@ -276,7 +276,7 @@ resource "kubernetes_deployment" "wordpress" {
       spec {
         container {
           name              = "wordpress"
-          image             = "wordpress:latest"
+          image             = var.wordpress_image
           image_pull_policy = "IfNotPresent"
 
           port {
@@ -718,7 +718,7 @@ resource "kubernetes_cron_job_v1" "restore_from_s3" {
 
             init_container {
               name              = "restore-files"
-              image             = "wordpress:latest"
+              image             = var.wordpress_image
               image_pull_policy = "IfNotPresent"
               command = [
                 "sh",

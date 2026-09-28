@@ -155,6 +155,7 @@ locals {
   public_sites = {
     l-zazer = {
       hosts                     = ["l.zazer.mobi"]
+      wordpress_image           = "wordpress@sha256:5a93c470ae8220fddf71f6ebe3bc94e615ddc2ae4d9810f795b830fb11c41a17"
       upload_max_filesize_mb    = 128
       wordpress_update_strategy = "Recreate"
       files_size                = "10Gi"
@@ -165,6 +166,7 @@ locals {
     }
     hitmakers = {
       hosts                     = ["hitmakers.games", "hitmakers.website"]
+      wordpress_image           = "wordpress@sha256:6301205c75c06e393635ff78c78ada230da15352ee03b9cb60a623ee2667bb55"
       upload_max_filesize_mb    = null
       wordpress_update_strategy = "RollingUpdate"
       files_size                = "20Gi"
@@ -477,6 +479,8 @@ module "public_sites" {
   name      = each.key
   namespace = local.public_sites_namespace
   hosts     = each.value.hosts
+
+  wordpress_image = each.value.wordpress_image
 
   upload_max_filesize_mb    = each.value.upload_max_filesize_mb
   wordpress_update_strategy = each.value.wordpress_update_strategy

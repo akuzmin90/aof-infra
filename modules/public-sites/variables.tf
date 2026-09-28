@@ -13,6 +13,12 @@ variable "hosts" {
   type        = list(string)
 }
 
+variable "wordpress_image" {
+  description = "WordPress image. Pin a digest to preserve the runtime when moving nodes."
+  type        = string
+  default     = "wordpress:latest"
+}
+
 variable "wordpress_update_strategy" {
   description = "Deployment update strategy. Use Recreate when the files PVC cannot attach to multiple nodes."
   type        = string
