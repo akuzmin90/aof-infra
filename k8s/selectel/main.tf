@@ -261,7 +261,7 @@ resource "kubernetes_persistent_volume_claim_v1" "backend_admin" {
 
     resources {
       requests = {
-        storage = "2Gi"
+        storage = "4Gi"
       }
     }
   }
