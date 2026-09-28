@@ -100,7 +100,16 @@ locals {
       description('Restores a ${var.name} logical dump into the dedicated dev restore database. This job intentionally does not target production.')
       keepDependencies(false)
       parameters {
-        stringParam('DUMP_OBJECT', '', 'Object key inside ${local.dump_bucket}, for example ${local.dump_path}/aof-manual-20260525T120000Z.dump.')
+        ${indent(8, templatefile("${path.module}/../jenkins/parameters/dump-object.groovy.tftpl", {
+  reactive  = false
+  instances = []
+  namespace = local.namespace
+  endpoint  = var.s3_endpoint_url
+  region    = var.s3_region
+  bucket    = local.dump_bucket
+  prefix    = "${var.name}/"
+  suffixes  = [".dump"]
+}))}
         stringParam('TARGET_DATABASE', 'aof_dev_restore', 'Existing dev database to restore into.')
         booleanParam('RESET_SCHEMA', true, 'Drop and recreate public schema before restoring.')
       }

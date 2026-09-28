@@ -1,0 +1,74 @@
+${reactive ? "activeChoiceReactiveParam" : "activeChoiceParam"}('DUMP_OBJECT') {
+  description('Available dumps in ${bucket}, newest first. Full object paths identify the source and date. Reload the build form to refresh.')
+  choiceType('SINGLE_SELECT')
+  filterable()
+%{ if reactive ~}
+  referencedParameter('INSTANCE')
+%{ endif ~}
+  groovyScript {
+    def choicesScript = '''
+import io.fabric8.kubernetes.client.ConfigBuilder
+import io.fabric8.kubernetes.client.KubernetesClientBuilder
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request
+import java.time.Duration
+
+def kubernetes = null
+def s3 = null
+try {
+%{ if reactive ~}
+    if (!${jsonencode(instances)}.contains(INSTANCE)) {
+        return ['Select an instance first:disabled']
+    }
+    def namespace = 'aof-' + INSTANCE
+%{ else ~}
+    def namespace = '${namespace}'
+%{ endif ~}
+    kubernetes = new KubernetesClientBuilder().withConfig(new ConfigBuilder()
+        .withConnectionTimeout(5000).withRequestTimeout(10000)
+        .withRequestRetryBackoffLimit(0).build()).build()
+    def secret = kubernetes.secrets().inNamespace(namespace).withName('aof-postgres-s3').get()
+    def accessKey = new String(secret.data['ACCESS_KEY_ID'].decodeBase64(), 'UTF-8')
+    def secretKey = new String(secret.data['ACCESS_SECRET_KEY'].decodeBase64(), 'UTF-8')
+    // Jenkins' Groovy 2.4 cannot directly invoke Java interface static methods.
+    s3 = S3Client.class.getMethod('builder').invoke(null)
+        .endpointOverride(URI.create('${endpoint}'))
+        .region(Region.of('${region}'))
+        .forcePathStyle(true)
+        .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
+        .overrideConfiguration(ClientOverrideConfiguration.builder()
+            .apiCallTimeout(Duration.ofSeconds(15)).apiCallAttemptTimeout(Duration.ofSeconds(5)).build())
+        .build()
+    def request = ListObjectsV2Request.builder().bucket('${bucket}').prefix('${prefix}').build()
+    def dumps = []
+    for (page in s3.listObjectsV2Paginator(request)) {
+        dumps.addAll(page.contents().findAll { object ->
+            ${jsonencode(suffixes)}.any { suffix -> object.key().endsWith(suffix) }
+        })
+    }
+    def keys = dumps.sort { a, b ->
+        (b.lastModified() <=> a.lastModified()) ?: (a.key() <=> b.key())
+    }.collect { it.key() }
+    return keys ? ['Select a dump:disabled'] + keys : ['No compatible dumps found:disabled']
+} catch (Exception ignored) {
+    return ['Unable to list dumps; check S3 access and reload:disabled']
+} finally {
+    s3?.close()
+    kubernetes?.close()
+}
+'''
+    def fallback = "return ['Unable to list dumps; check Jenkins configuration:disabled']"
+    // Approve only these infrastructure-owned scripts; credentials stay in Kubernetes.
+    def approval = org.jenkinsci.plugins.scriptsecurity.scripts.ScriptApproval.get()
+    def language = org.jenkinsci.plugins.scriptsecurity.scripts.languages.GroovyLanguage.get()
+    approval.preapprove(choicesScript, language)
+    approval.preapprove(fallback, language)
+    approval.save()
+    script(choicesScript)
+    fallbackScript(fallback)
+  }
+}

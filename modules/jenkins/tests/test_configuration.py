@@ -17,7 +17,7 @@ class ConfigurationTests(unittest.TestCase):
    source=(MODULE/'main.tf').read_text()
    (root/'main.tf').write_text(source[:source.index('resource "kubernetes_namespace"')])
    shutil.copy(MODULE/'variables.tf',root/'variables.tf')
-   for name in ['backend','charts']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
+   for name in ['backend','charts','parameters']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
    for instances in [['dev','feature','release'],['feature']]:
     r=subprocess.run(['tofu',f'-chdir={root}','console','-var=admin_password=test','-var=backend_job_name=aof-back','-var=frontend_instances='+json.dumps(instances)],input='jsonencode(local.backend_job_scripts)\n',text=True,capture_output=True,check=True)
     scripts=json.loads(json.loads(r.stdout));self.assertEqual(len(scripts),1+len(instances))
@@ -53,7 +53,7 @@ class ConfigurationTests(unittest.TestCase):
    source=(MODULE/'main.tf').read_text()
    (root/'main.tf').write_text(source[:source.index('resource "kubernetes_namespace"')])
    shutil.copy(MODULE/'variables.tf',root/'variables.tf')
-   for name in ['backend','charts']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
+   for name in ['backend','charts','parameters']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
    for instances in [['dev','feature','release'],['feature']]:
     r=subprocess.run(['tofu',f'-chdir={root}','console','-var=admin_password=test','-var=frontend_job_name=aof-front','-var=frontend_s3_endpoint_url=https://s3.example.invalid','-var=frontend_instances='+json.dumps(instances)],input='jsonencode(local.frontend_job_scripts)\n',text=True,capture_output=True,check=True)
     scripts=json.loads(json.loads(r.stdout))

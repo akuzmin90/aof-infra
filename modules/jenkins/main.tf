@@ -648,7 +648,16 @@ database_restore_job_script = <<-EOT
       }
       parameters {
         choiceParam('INSTANCE', ${jsonencode(var.frontend_instances)}, 'Deployment instance and namespace suffix.')
-        stringParam('DUMP_OBJECT', '', 'Object key inside ${var.postgres_dump_bucket}, for example production/automatic/nsbackup-2026-07-17.gz or feature/manual/aof-manual-20260525T120000Z.dump.')
+        ${indent(8, templatefile("${path.module}/parameters/dump-object.groovy.tftpl", {
+reactive  = true
+instances = var.frontend_instances
+namespace = ""
+endpoint  = var.postgres_s3_endpoint_url
+region    = "us-east-1"
+bucket    = var.postgres_dump_bucket
+prefix    = ""
+suffixes  = [".dump", ".sql", ".gz"]
+}))}
         stringParam('TARGET_DATABASE', 'aof', 'Database to restore into.')
         booleanParam('RESET_SCHEMA', true, 'Drop and recreate public schema before restoring.')
       }
@@ -986,12 +995,16 @@ resource "helm_release" "jenkins" {
           SCRIPT
         }
 
+        # Preserve installed versions when adding restore dropdown dependencies.
+        installLatestPlugins = false
         installPlugins = [
           "kubernetes:4384.v1b_6367f393d9",
           "workflow-aggregator:608.v67378e9d3db_1",
           "git:5.8.0",
-          "configuration-as-code:latest",
-          "job-dsl:latest",
+          "configuration-as-code:2121.v86fe99d4b_b_a_b_",
+          "job-dsl:3732.v9a_c49a_61a_313",
+          "uno-choice:2.8.10",
+          "aws-java-sdk2-s3:2.42.33-70.vd69c0763fa_60",
           "lockable-resources:1539.v4db_b_fc1cc115"
         ]
 
