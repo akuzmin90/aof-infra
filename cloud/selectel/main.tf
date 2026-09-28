@@ -125,22 +125,28 @@ resource "selectel_mks_cluster_v1" "main" {
   ]
 }
 
-resource "selectel_mks_nodegroup_v1" "compute" {
+# Separate resource identity allows migration before retiring the previous worker group.
+resource "selectel_mks_nodegroup_v1" "compute_16gb" {
   cluster_id                   = selectel_mks_cluster_v1.main.id
   project_id                   = selectel_mks_cluster_v1.main.project_id
   region                       = selectel_mks_cluster_v1.main.region
   availability_zone            = "ru-7a"
   nodes_count                  = 2
   cpus                         = 2
-  ram_mb                       = 8192
+  ram_mb                       = 16384
   volume_gb                    = 32
   volume_type                  = "fast.ru-7a"
   install_nvidia_device_plugin = false
   preemptible                  = false
 
   labels = {
-    "hitmakers.ru/node-pool" = "compute"
-    "workload"               = "compute"
+    "hitmakers.ru/node-pool"          = "compute"
+    "workload"                        = "compute"
+    "hitmakers.ru/compute-generation" = "16gb"
+  }
+
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

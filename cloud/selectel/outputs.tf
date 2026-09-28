@@ -47,7 +47,7 @@ output "k8s_cluster_region" {
 
 output "k8s_compute_nodegroup_id" {
   description = "App node group ID."
-  value       = selectel_mks_nodegroup_v1.compute.id
+  value       = selectel_mks_nodegroup_v1.compute_16gb.id
 }
 
 output "k8s_database_nodegroup_id" {
