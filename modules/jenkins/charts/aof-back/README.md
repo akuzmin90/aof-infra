@@ -5,6 +5,7 @@ This chart deploys the existing AOF backend Docker image without changing applic
 The runtime intentionally uses:
 
 - one replica;
+- a 2 GiB memory request and 4 GiB memory limit per backend;
 - the `dev` Spring profile used by Kayra;
 - the application's existing scheduler behavior;
 - the existing embedded WebSocket broker and cache behavior;

@@ -70,8 +70,8 @@ cp -L /ci-scripts/* "$WORKSPACE/ci-tools/"
           'HOST=' + instance + '.${domain}', 'LEGACY_HOST=' + instance + '.${legacy_domain}',
           'TLS_SECRET=' + instance + '-k8s-zazer-fun-tls', 'LEGACY_TLS_SECRET=' + instance + '-zazer-fun-tls',
           'ADMIN_PVC=${admin_pvc}',
-          'BACKEND_MEMORY_REQUEST=' + (instance == 'dev' ? '1Gi' : '768Mi'),
-          'BACKEND_MEMORY_LIMIT=' + (instance == 'dev' ? '2Gi' : '1536Mi'),
+          'BACKEND_MEMORY_REQUEST=2Gi',
+          'BACKEND_MEMORY_LIMIT=4Gi',
           'DEPLOY_TIMEOUT=' + deployTimeout, 'DEPLOY_SECONDS=' + deploySeconds,
           'STARTUP_FAILURE_THRESHOLD=' + Math.ceil((deploySeconds+900)/5.0d).toInteger(),
           'BUILD_ID=' + env.JOB_NAME.replaceAll('[^A-Za-z0-9_.-]', '-') + '-' + env.BUILD_NUMBER

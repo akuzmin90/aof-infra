@@ -67,10 +67,10 @@ extraVolumeMounts: []
 resources:
   requests:
     cpu: 200m
-    memory: 768Mi
+    memory: 2Gi
   limits:
     cpu: "2"
-    memory: 1536Mi
+    memory: 4Gi
 
 startupProbe:
   httpGet:
