@@ -186,7 +186,7 @@ resource "selectel_mks_nodegroup_v1" "ci" {
   availability_zone            = "ru-7a"
   nodes_count                  = 0
   cpus                         = 4
-  ram_mb                       = 8192
+  ram_mb                       = 16384
   volume_gb                    = 64
   volume_type                  = "universal.ru-7a"
   install_nvidia_device_plugin = false
@@ -208,6 +208,7 @@ resource "selectel_mks_nodegroup_v1" "ci" {
 
   lifecycle {
     create_before_destroy = true
+    ignore_changes        = [nodes_count]
   }
 }
 

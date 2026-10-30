@@ -1,0 +1,26 @@
+[Unit]
+Description=Mirrorland resource and service-state snapshots for Alloy/Loki
+
+[Service]
+Type=oneshot
+User=alloy
+Group=alloy
+ExecStart=/usr/bin/python3 /opt/aof-host-snapshot/host_snapshot.py
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/var/lib/alloy/host-snapshots
+Nice=15
+CPUAccounting=true
+CPUQuota=10%
+MemoryAccounting=true
+MemoryMax=32M
+TasksMax=16
+TimeoutStartSec=10s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=
+ReadWritePaths=/var/lib/alloy/host-snapshots

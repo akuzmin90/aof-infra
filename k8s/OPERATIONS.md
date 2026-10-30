@@ -411,10 +411,20 @@ tag overrides.
 
 Feature has no automatic trigger and runs only when started manually.
 All three stand-specific jobs disable concurrent builds. If changes arrive while it is
-running, Jenkins queues a build until the active build finishes. The shared
-stand lock also makes it wait for manual deployments and database restores,
-before allocating an agent. This preserves pending changes without overlapping
-work on the same stand. Dev, feature, and release can run independently.
+running, Jenkins queues a build until the active build finishes. A backend lock per stand serializes automatic and manual backend runs.
+Frontend and backend builds, and the dev, feature and release stands, run independently.
+All Jenkins jobs request agents immediately on the existing AOF workers, including
+workers with the `dedicated` workload taint. Regular agents exclude `workload=ci`,
+so normal runs do not trigger autoscaling. Agent containers have no configured CPU,
+memory, or ephemeral-storage requests/limits and no capacity-reservation init container.
+The autoscaled CI pool is an emergency: a single retry is allowed only when Kubernetes
+pod status/events confirm OOM or resource pressure on the regular attempt. Ordinary
+build errors, manual cancellation, and unrelated agent disconnects never request CI.
+Regular allocation is bounded at five minutes; emergency allocation at fifteen minutes.
+These deadlines cover allocation only, not an active build. Diagnosis is bounded at
+two minutes. Deployment/migrations and restores after backend quiescing or database
+mutation are never automatically repeated.
+Only the backend deployment step takes the shared stand lock used by database restores.
 
 Apply the Jenkins module to install the generated jobs. Each new polling job
 needs an initial build to establish its checkout history (the first poll can
@@ -430,14 +440,14 @@ previous logs from each pod's containers.
 
 Backend pipeline code lives in `modules/jenkins/backend/pipeline.groovy.tftpl`;
 build, deployment, and diagnostic scripts live alongside it. OpenTofu renders
-both CI and compute agent YAML from structured objects. Scripts are mounted from
+regular and emergency agent YAML from structured objects. Scripts are mounted from
 a content-addressed ConfigMap and copied into the build workspace before use.
 Apply tooling updates while backend jobs are idle; retain older tooling ConfigMaps
 while a queued or running build still references them.
 
-Allocation has a 15-minute CI deadline and a 10-minute compute fallback deadline;
-checkout allows 10 minutes, and image build/push allows 45 minutes. Explicit user
-cancellation does not start a fallback build. The stand lock covers the entire run.
+Checkout allows 10 minutes, and image build/push allows 45 minutes. The backend
+lock covers the entire run; the shared stand lock covers deployment and coordinates
+it with database restores.
 Only idempotent preflight reads and registry transfers have bounded retries; Helm
 upgrade and database migrations are never automatically retried.
 
@@ -540,5 +550,7 @@ Dedicated frontend jobs pin their stand, S3 bucket mapping, credentials, and
 `npm run build` command. Feature exposes only `GIT_BRANCH`; dev and release need
 no parameters. Dev and release use Poll SCM (`H */3 * * *`), which needs an initial
 checkout/build to establish SCM history. All dedicated frontend jobs disable
-concurrent builds and use the existing shared stand lock. The original manual
+concurrent builds and use a frontend lock per stand. Frontend work can run alongside
+backend builds and deployments; manual and automatic frontend runs for the same stand
+remain serialized. The original manual
 `aof-front` job retains its parameters and history.

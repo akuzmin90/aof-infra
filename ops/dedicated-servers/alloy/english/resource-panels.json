@@ -1,0 +1,1033 @@
+[
+  {
+    "id": 200,
+    "title": "CPU used",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 0,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"cpu_used_percent\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "CPU used"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "percent",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        },
+        "min": 0,
+        "max": 100
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 201,
+    "title": "RAM used",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 4,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"memory_used_percent\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "RAM used"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "percent",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        },
+        "min": 0,
+        "max": 100
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 202,
+    "title": "RAM total",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 8,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"memory_total_bytes\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "instant",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "RAM total"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "bytes",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        }
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "graphMode": "none"
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 203,
+    "title": "Root disk used",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 12,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"disk_used_percent\", mount=\"mount\" | kind=\"filesystem\" | mount=\"/\" | unwrap value | __error__=\"\" [90s]) by (mount)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "Root disk used"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "percent",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        },
+        "min": 0,
+        "max": 100
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 204,
+    "title": "Root disk available",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 16,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"disk_available_bytes\", mount=\"mount\" | kind=\"filesystem\" | mount=\"/\" | unwrap value | __error__=\"\" [90s]) by (mount)",
+        "queryType": "instant",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "Root disk available"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "bytes",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        }
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "graphMode": "none"
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 205,
+    "title": "Last host sample",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 20,
+      "y": 0,
+      "w": 4,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "(last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"sample_unix\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)) * 1000",
+        "queryType": "instant",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "Last host sample"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "dateTimeFromNow",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        }
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "graphMode": "none"
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 210,
+    "title": "tomcat.service",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 0,
+      "y": 4,
+      "w": 8,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"active\", unit=\"unit\" | kind=\"service\" | unit=\"tomcat.service\" | unwrap value | __error__=\"\" [90s]) by (unit)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "tomcat.service"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "short",
+        "noValue": "UNKNOWN",
+        "color": {
+          "mode": "thresholds"
+        },
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "gray",
+              "value": null
+            },
+            {
+              "color": "red",
+              "value": 0
+            },
+            {
+              "color": "green",
+              "value": 1
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "options": {
+              "-1": {
+                "text": "UNKNOWN",
+                "color": "gray"
+              },
+              "0": {
+                "text": "DOWN",
+                "color": "red"
+              },
+              "1": {
+                "text": "UP",
+                "color": "green"
+              }
+            }
+          }
+        ]
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "colorMode": "background",
+      "graphMode": "none",
+      "textMode": "value_and_name"
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 211,
+    "title": "postgresql@11-main.service",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 8,
+      "y": 4,
+      "w": 8,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"active\", unit=\"unit\" | kind=\"service\" | unit=\"postgresql@11-main.service\" | unwrap value | __error__=\"\" [90s]) by (unit)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "postgresql@11-main.service"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "short",
+        "noValue": "UNKNOWN",
+        "color": {
+          "mode": "thresholds"
+        },
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "gray",
+              "value": null
+            },
+            {
+              "color": "red",
+              "value": 0
+            },
+            {
+              "color": "green",
+              "value": 1
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "options": {
+              "-1": {
+                "text": "UNKNOWN",
+                "color": "gray"
+              },
+              "0": {
+                "text": "DOWN",
+                "color": "red"
+              },
+              "1": {
+                "text": "UP",
+                "color": "green"
+              }
+            }
+          }
+        ]
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "colorMode": "background",
+      "graphMode": "none",
+      "textMode": "value_and_name"
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 212,
+    "title": "nginx.service",
+    "type": "stat",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 16,
+      "y": 4,
+      "w": 8,
+      "h": 4
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"active\", unit=\"unit\" | kind=\"service\" | unit=\"nginx.service\" | unwrap value | __error__=\"\" [90s]) by (unit)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "nginx.service"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "short",
+        "noValue": "UNKNOWN",
+        "color": {
+          "mode": "thresholds"
+        },
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "gray",
+              "value": null
+            },
+            {
+              "color": "red",
+              "value": 0
+            },
+            {
+              "color": "green",
+              "value": 1
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "options": {
+              "-1": {
+                "text": "UNKNOWN",
+                "color": "gray"
+              },
+              "0": {
+                "text": "DOWN",
+                "color": "red"
+              },
+              "1": {
+                "text": "UP",
+                "color": "green"
+              }
+            }
+          }
+        ]
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "colorMode": "background",
+      "graphMode": "none",
+      "textMode": "value_and_name"
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 220,
+    "title": "CPU and memory usage",
+    "type": "timeseries",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 0,
+      "y": 8,
+      "w": 12,
+      "h": 8
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"cpu_used_percent\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "CPU"
+      },
+      {
+        "refId": "B",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"memory_used_percent\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "RAM"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "percent",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        },
+        "min": 0,
+        "max": 100
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 221,
+    "title": "Filesystem usage",
+    "type": "timeseries",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 12,
+      "y": 8,
+      "w": 12,
+      "h": 8
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"disk_used_percent\", mount=\"mount\" | kind=\"filesystem\"  | unwrap value | __error__=\"\" [90s]) by (mount)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "{{mount}}"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "percent",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        },
+        "min": 0,
+        "max": 100
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 222,
+    "title": "Available RAM and swap used",
+    "type": "timeseries",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 0,
+      "y": 16,
+      "w": 12,
+      "h": 8
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"memory_available_bytes\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "Available RAM"
+      },
+      {
+        "refId": "B",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"swap_used_bytes\" | kind=\"host\"  | unwrap value | __error__=\"\" [90s]) by (host)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "Swap used"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "bytes",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        }
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 223,
+    "title": "Filesystem available space",
+    "type": "timeseries",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 12,
+      "y": 16,
+      "w": 12,
+      "h": 8
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"disk_available_bytes\", mount=\"mount\" | kind=\"filesystem\"  | unwrap value | __error__=\"\" [90s]) by (mount)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "{{mount}}"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "bytes",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        }
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 224,
+    "title": "Filesystem inode usage",
+    "type": "timeseries",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 0,
+      "y": 24,
+      "w": 12,
+      "h": 6
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"inode_used_percent\", mount=\"mount\" | kind=\"filesystem\"  | unwrap value | __error__=\"\" [90s]) by (mount)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "{{mount}}"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "percent",
+        "noValue": "No recent sample",
+        "color": {
+          "mode": "palette-classic"
+        },
+        "min": 0,
+        "max": 100
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      }
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  },
+  {
+    "id": 225,
+    "title": "Service-state history",
+    "type": "state-timeline",
+    "datasource": {
+      "type": "loki",
+      "uid": "P8E80F9AEF21F6940"
+    },
+    "gridPos": {
+      "x": 12,
+      "y": 24,
+      "w": 12,
+      "h": 6
+    },
+    "targets": [
+      {
+        "refId": "A",
+        "expr": "last_over_time({source=\"dedicated\",host=\"mland\",env=\"prod-en\",service=\"host-resources\"} | json kind=\"kind\", value=\"active\", unit=\"unit\" | kind=\"service\"  | unwrap value | __error__=\"\" [90s]) by (unit)",
+        "queryType": "range",
+        "datasource": {
+          "type": "loki",
+          "uid": "P8E80F9AEF21F6940"
+        },
+        "legendFormat": "{{unit}}"
+      }
+    ],
+    "fieldConfig": {
+      "defaults": {
+        "unit": "short",
+        "noValue": "UNKNOWN",
+        "color": {
+          "mode": "thresholds"
+        },
+        "thresholds": {
+          "mode": "absolute",
+          "steps": [
+            {
+              "color": "gray",
+              "value": null
+            },
+            {
+              "color": "red",
+              "value": 0
+            },
+            {
+              "color": "green",
+              "value": 1
+            }
+          ]
+        },
+        "mappings": [
+          {
+            "type": "value",
+            "options": {
+              "-1": {
+                "text": "UNKNOWN",
+                "color": "gray"
+              },
+              "0": {
+                "text": "DOWN",
+                "color": "red"
+              },
+              "1": {
+                "text": "UP",
+                "color": "green"
+              }
+            }
+          }
+        ]
+      },
+      "overrides": []
+    },
+    "options": {
+      "reduceOptions": {
+        "calcs": [
+          "lastNotNull"
+        ],
+        "fields": "",
+        "values": false
+      },
+      "legend": {
+        "displayMode": "list",
+        "placement": "bottom",
+        "showLegend": true
+      },
+      "tooltip": {
+        "mode": "multi",
+        "sort": "none"
+      },
+      "mergeValues": true,
+      "showValue": "auto",
+      "rowHeight": 0.8
+    },
+    "description": "30-second local snapshots forwarded by Alloy to Loki. Values become absent after 90 seconds without valid samples."
+  }
+]

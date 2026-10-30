@@ -1,0 +1,31 @@
+[Unit]
+Description=English production PostgreSQL backup and verified S3 upload
+After=network-online.target postgresql@11-main.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/var/lib/aof-backup
+ExecStart=/usr/bin/python3 /opt/aof-backup/backup.py run
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+Nice=10
+IOSchedulingClass=idle
+CPUAccounting=true
+CPUQuota=100%
+MemoryAccounting=true
+MemoryMax=512M
+TasksMax=64
+TimeoutStartSec=3h
+TimeoutStopSec=20s
+KillMode=control-group
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/aof-backup /var/log/aof-backup.log /run/lock

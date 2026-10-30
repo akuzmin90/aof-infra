@@ -1,0 +1,5 @@
+loki.source.file "host_resources" {
+  targets = [{ __path__ = "/var/lib/alloy/host-snapshots/observations.jsonl", source = "dedicated", host = "mland", env = "prod-en", service = "host-resources" }]
+  tail_from_end = false
+  forward_to = [loki.write.cluster.receiver]
+}

@@ -10,9 +10,10 @@ def deployTimeout = params.DEPLOY_TIMEOUT?.trim() ?: '15m'
 if (!(deployTimeout ==~ /^[1-9][0-9]{0,4}[smh]$/)) { error('DEPLOY_TIMEOUT must be a positive duration, such as 15m or 30m') }
 def deploySeconds = deployTimeout.substring(0, deployTimeout.length()-1).toInteger() * [s:1, m:60, h:3600][deployTimeout[-1]]
 if (deploySeconds > 10800) { error('DEPLOY_TIMEOUT must not exceed 3h') }
-def ciYaml = '''${ci_yaml}'''
-def workerYaml = '''${worker_yaml}'''
-def agentLocation = 'CI'
+def regularYaml = '''${regular_yaml}'''
+def emergencyYaml = '''${emergency_yaml}'''
+def deploymentStarted = false
+def agentLocation = 'AOF'
 def buildStart = System.currentTimeMillis()
 def executeBuild = {
   def commit = ''
@@ -62,35 +63,38 @@ cp -L /ci-scripts/* "$WORKSPACE/ci-tools/"
       if (!(digest ==~ /^sha256:[a-f0-9]{64}$/)) { error('Build did not produce a valid image digest') }
     }
     stage('Deploy') {
-      container('helm') {
-        withEnv([
-          'IMAGE_REPOSITORY=${image_repository}', 'IMAGE_TAG=' + imageTag,
-          'NAMESPACE=aof-' + instance, 'RELEASE_NAME=aof-back',
-          'SPRING_PROFILE=' + profiles[instance], 'DB_CLUSTER=aof-' + instance + '-db',
-          'HOST=' + instance + '.${domain}', 'LEGACY_HOST=' + instance + '.${legacy_domain}',
-          'TLS_SECRET=' + instance + '-k8s-zazer-fun-tls', 'LEGACY_TLS_SECRET=' + instance + '-zazer-fun-tls',
-          'ADMIN_PVC=${admin_pvc}',
-          'BACKEND_MEMORY_REQUEST=2Gi',
-          'BACKEND_MEMORY_LIMIT=4Gi',
-          'DEPLOY_TIMEOUT=' + deployTimeout, 'DEPLOY_SECONDS=' + deploySeconds,
-          'STARTUP_FAILURE_THRESHOLD=' + Math.ceil((deploySeconds+900)/5.0d).toInteger(),
-          'BUILD_ID=' + env.JOB_NAME.replaceAll('[^A-Za-z0-9_.-]', '-') + '-' + env.BUILD_NUMBER
-        ]) {
-          try {
-            timeout(time: deploySeconds + 60, unit: 'SECONDS') {
-              sh(label: 'Deploy and monitor new revision', script: '#!/bin/bash\nexec bash "$WORKSPACE/ci-tools/deploy.sh"')
+      deploymentStarted = true
+      lock(resource: 'aof-stand-' + instance, reason: 'Backend deployment for ' + instance) {
+        container('helm') {
+          withEnv([
+            'IMAGE_REPOSITORY=${image_repository}', 'IMAGE_TAG=' + imageTag,
+            'NAMESPACE=aof-' + instance, 'RELEASE_NAME=aof-back',
+            'SPRING_PROFILE=' + profiles[instance], 'DB_CLUSTER=aof-' + instance + '-db',
+            'HOST=' + instance + '.${domain}', 'LEGACY_HOST=' + instance + '.${legacy_domain}',
+            'TLS_SECRET=' + instance + '-k8s-zazer-fun-tls', 'LEGACY_TLS_SECRET=' + instance + '-zazer-fun-tls',
+            'ADMIN_PVC=${admin_pvc}',
+            'BACKEND_MEMORY_REQUEST=2Gi',
+            'BACKEND_MEMORY_LIMIT=4Gi',
+            'DEPLOY_TIMEOUT=' + deployTimeout, 'DEPLOY_SECONDS=' + deploySeconds,
+            'STARTUP_FAILURE_THRESHOLD=' + Math.ceil((deploySeconds+900)/5.0d).toInteger(),
+            'BUILD_ID=' + env.JOB_NAME.replaceAll('[^A-Za-z0-9_.-]', '-') + '-' + env.BUILD_NUMBER
+          ]) {
+            try {
+              timeout(time: deploySeconds + 60, unit: 'SECONDS') {
+                sh(label: 'Deploy and monitor new revision', script: '#!/bin/bash\nexec bash "$WORKSPACE/ci-tools/deploy.sh"')
+              }
+            } catch (Exception failure) {
+              // A Jenkins hard timeout may interrupt shell cleanup. Keep this fallback bounded,
+              // and never replace the original failure with a diagnostic error.
+              if (!fileExists('ci-logs/deployment-diagnostics.log')) {
+                try {
+                  timeout(time: 2, unit: 'MINUTES') {
+                    sh(label: 'Deployment diagnostics', script: '#!/bin/bash\nexec bash "$WORKSPACE/ci-tools/diagnostics.sh"')
+                  }
+                } catch (Exception incomplete) { echo '[Diagnostics] Incomplete: ' + incomplete.toString() }
+              }
+              throw failure
             }
-          } catch (Exception failure) {
-            // A Jenkins hard timeout may interrupt shell cleanup. Keep this fallback bounded,
-            // and never replace the original failure with a diagnostic error.
-            if (!fileExists('ci-logs/deployment-diagnostics.log')) {
-              try {
-                timeout(time: 2, unit: 'MINUTES') {
-                  sh(label: 'Deployment diagnostics', script: '#!/bin/bash\nexec bash "$WORKSPACE/ci-tools/diagnostics.sh"')
-                }
-              } catch (Exception incomplete) { echo '[Diagnostics] Incomplete: ' + incomplete.toString() }
-            }
-            throw failure
           }
         }
       }
@@ -108,44 +112,8 @@ cp -L /ci-scripts/* "$WORKSPACE/ci-tools/"
     } catch (Exception archiveFailure) { echo '[Logs] Could not archive diagnostics: ' + archiveFailure.toString() }
   }
 }
-// This lock covers allocation, build and deployment so builds cannot overtake each other.
-lock(resource: 'aof-stand-' + instance, reason: 'Backend build/deployment for ' + instance) {
-  def runOnAgent = { yaml, maxMinutes ->
-    def allocated = false
-    def finished = false
-    try {
-      podTemplate(serviceAccount: 'jenkins', showRawYaml: false, slaveConnectTimeout: maxMinutes*60, yaml: yaml) {
-        currentBuild.description = 'Waiting for ' + agentLocation + ' worker'
-        echo '[CI] Requesting ' + agentLocation + ' worker; allocation deadline ' + maxMinutes + 'm.'
-        parallel(work: {
-          try {
-            node(POD_LABEL) { allocated = true; executeBuild() }
-          } finally { finished = true }
-        }, allocation: {
-          def minutes = 0
-          while (!allocated && !finished) {
-            sleep(time: 60, unit: 'SECONDS')
-            minutes++
-            if (!allocated && !finished) {
-              echo '[CI +' + minutes + 'm] Waiting for ' + agentLocation + ' worker.'
-              if (minutes >= maxMinutes) { error('[CI] Worker allocation deadline exceeded') }
-            }
-          }
-        }, failFast: true)
-      }
-    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException interrupted) {
-      // Never provision a second worker after an interrupted Pipeline.
-      throw interrupted
-    } catch (Exception failure) {
-      if (allocated) { throw failure }
-      echo '[CI] Allocation failed: ' + failure.toString()
-      return false
-    }
-    return true
-  }
-  if (!runOnAgent(ciYaml, 15)) {
-    agentLocation = 'compute fallback'
-    echo '[CI] Switching to compute fallback; reserving 1 CPU and 5 GiB before starting.'
-    if (!runOnAgent(workerYaml, 10)) { error('[CI] No worker available; build stopped before checkout/deployment') }
-  }
+// Serialize backend runs for each stand without blocking frontend builds.
+lock(resource: 'aof-back-' + instance, reason: 'Backend build/deployment for ' + instance) {
+  ${agent_allocator}
+  runOnPreferredAgents(regularYaml, emergencyYaml, executeBuild, { !deploymentStarted })
 }

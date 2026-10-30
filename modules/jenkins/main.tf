@@ -42,6 +42,72 @@ locals {
     for instance, profile in local.backend_spring_profiles : "'${instance}': '${profile}'"
   ])
 
+  # Existing workers first; only a confirmed resource failure requests CI capacity.
+  agent_scheduling = {
+    regular = {
+      affinity = { nodeAffinity = { requiredDuringSchedulingIgnoredDuringExecution = {
+        nodeSelectorTerms = [{ matchExpressions = [{ key = "workload", operator = "NotIn", values = ["ci"] }] }]
+      } } }
+      tolerations = [{ key = "dedicated", operator = "Exists", effect = "NoSchedule" }]
+    }
+    emergency = {
+      nodeSelector = { workload = "ci" }
+      tolerations  = [{ key = "dedicated", operator = "Equal", value = "ci", effect = "NoSchedule" }]
+    }
+  }
+  agent_allocator = templatefile("${path.module}/agents/allocate.groovy.tftpl", {
+    diagnostics_yaml = yamlencode({
+      apiVersion = "v1"
+      kind       = "Pod"
+      spec = merge(local.agent_scheduling.regular, {
+        containers = [
+          { name = "jnlp", image = "jenkins/inbound-agent:latest-jdk21" },
+          { name = "kubectl", image = "dtzar/helm-kubectl:3.16.4", command = ["cat"], tty = true }
+        ]
+      })
+    })
+    diagnostics_script = base64encode(file("${path.module}/agents/resource-failure.sh"))
+  })
+  frontend_agent_yaml = { for pool in ["regular", "emergency"] : pool => yamlencode({
+    apiVersion = "v1"
+    kind       = "Pod"
+    spec = merge(local.agent_scheduling[pool], {
+      containers = [
+        { name = "jnlp", image = "jenkins/inbound-agent:latest-jdk21" },
+        { name = "node", image = "node:18-bookworm", command = ["cat"], tty = true },
+        {
+          name = "mc", image = "quay.io/minio/mc:latest", command = ["cat"], tty = true
+          env = concat([{ name = "S3_ENDPOINT", value = var.frontend_s3_endpoint_url }], [
+            for entry in [{ name = "S3_ACCESS_KEY", key = "access-key" }, { name = "S3_SECRET_KEY", key = "secret-key" }] : {
+              name      = entry.name
+              valueFrom = { secretKeyRef = { name = local.frontend_s3_secret_name, key = entry.key } }
+            }
+          ])
+        }
+      ]
+    })
+  }) }
+  database_agent_yaml = { for pool in ["regular", "emergency"] : pool => {
+    for mode in ["dump", "restore"] : mode => yamlencode({
+      apiVersion = "v1"
+      kind       = "Pod"
+      spec = merge(local.agent_scheduling[pool], {
+        containers = [
+          { name = "jnlp", image = "jenkins/inbound-agent:latest-jdk21" },
+          merge({ name   = "postgres", image = "postgres:11", command = ["cat"], tty = true }, mode == "restore" ? {
+            volumeMounts = [{ name = "restore-script", mountPath = "/opt/aof-restore", readOnly = true }]
+          } : {}),
+          { name = "kubectl", image = "dtzar/helm-kubectl:3.16.4", command = ["cat"], tty = true },
+          { name = "mc", image = "quay.io/minio/mc:latest", command = ["cat"], tty = true }
+        ]
+        }, mode == "restore" ? {
+        securityContext = { fsGroup = 1000, fsGroupChangePolicy = "OnRootMismatch" }
+        } : {}, mode == "restore" ? {
+        volumes = [{ name = "restore-script", configMap = { name = "aof-db-restore-script" } }]
+      } : {})
+    })
+  } }
+
   frontend_jobs = concat([
     { name = var.frontend_job_name, instance = "", branch = "", poll = false }
     ], [for instance in ["dev", "feature", "release"] : {
@@ -92,149 +158,13 @@ locals {
             def frontendBuckets = [${local.frontend_bucket_map_entries}]
             def defaultGitBranches = [${local.frontend_git_branch_map_entries}]
 
-            lock(resource: 'aof-stand-' + instance, reason: 'Frontend deployment for ' + instance) {
-              currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
-              echo 'Requesting a dedicated CI node. Worker fallback is considered only if CI allocation fails for 15 minutes.'
+            lock(resource: 'aof-front-' + instance, reason: 'Frontend build/deployment for ' + instance) {
+              currentBuild.description = 'Waiting for an available AOF agent'
+              echo 'Using existing AOF workers first; no CPU or memory limits. Emergency CI is reserved for resource failures.'
 
-              def ciAgentYaml = """
-            apiVersion: v1
-            kind: Pod
-            spec:
-              nodeSelector:
-                workload: ci
-              tolerations:
-                - key: dedicated
-                  operator: Equal
-                  value: ci
-                  effect: NoSchedule
-              containers:
-                - name: jnlp
-                  image: jenkins/inbound-agent:latest-jdk21
-                  resources:
-                    requests:
-                      cpu: 50m
-                      memory: 128Mi
-                    limits:
-                      cpu: "500m"
-                      memory: 512Mi
-                - name: node
-                  image: node:18-bookworm
-                  command:
-                    - cat
-                  tty: true
-                  env:
-                    - name: NODE_OPTIONS
-                      value: --max-old-space-size=4096
-                  resources:
-                    requests:
-                      cpu: 250m
-                      memory: 4Gi
-                      ephemeral-storage: 4Gi
-                    limits:
-                      cpu: "1"
-                      memory: 5Gi
-                      ephemeral-storage: 12Gi
-                - name: mc
-                  image: quay.io/minio/mc:latest
-                  command:
-                    - cat
-                  tty: true
-                  env:
-                    - name: S3_ENDPOINT
-                      value: ${var.frontend_s3_endpoint_url}
-                    - name: S3_ACCESS_KEY
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.frontend_s3_secret_name}
-                          key: access-key
-                    - name: S3_SECRET_KEY
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.frontend_s3_secret_name}
-                          key: secret-key
-                  resources:
-                    requests:
-                      cpu: 10m
-                      memory: 64Mi
-                    limits:
-                      cpu: "250m"
-                      memory: 256Mi
-            """
-              def workerAgentYaml = """
-            apiVersion: v1
-            kind: Pod
-            spec:
-              nodeSelector:
-                workload: compute
-              initContainers:
-                - name: worker-capacity-reservation
-                  image: busybox:1.36.1
-                  command:
-                    - /bin/true
-                  resources:
-                    requests:
-                      cpu: "1"
-                      memory: 5Gi
-                    limits:
-                      cpu: "1"
-                      memory: 5Gi
-              containers:
-                - name: jnlp
-                  image: jenkins/inbound-agent:latest-jdk21
-                  resources:
-                    requests:
-                      cpu: 50m
-                      memory: 128Mi
-                    limits:
-                      cpu: "200m"
-                      memory: 512Mi
-                - name: node
-                  image: node:18-bookworm
-                  command:
-                    - cat
-                  tty: true
-                  env:
-                    - name: NODE_OPTIONS
-                      value: --max-old-space-size=4096
-                  resources:
-                    requests:
-                      cpu: 250m
-                      memory: 4Gi
-                      ephemeral-storage: 4Gi
-                    limits:
-                      cpu: "600m"
-                      memory: 5Gi
-                      ephemeral-storage: 12Gi
-                - name: mc
-                  image: quay.io/minio/mc:latest
-                  command:
-                    - cat
-                  tty: true
-                  env:
-                    - name: S3_ENDPOINT
-                      value: ${var.frontend_s3_endpoint_url}
-                    - name: S3_ACCESS_KEY
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.frontend_s3_secret_name}
-                          key: access-key
-                    - name: S3_SECRET_KEY
-                      valueFrom:
-                        secretKeyRef:
-                          name: ${local.frontend_s3_secret_name}
-                          key: secret-key
-                  resources:
-                    requests:
-                      cpu: 10m
-                      memory: 64Mi
-                    limits:
-                      cpu: "200m"
-                      memory: 256Mi
-            """
-              if (!workerAgentYaml.contains('workload: compute') || !workerAgentYaml.contains('worker-capacity-reservation') || workerAgentYaml.contains('workload: ci')) {
-                error('Internal error while rendering the compute fallback agent')
-              }
-              def agentLocation = 'CI'
+              def regularYaml = """${local.frontend_agent_yaml["regular"]}"""
+              def emergencyYaml = """${local.frontend_agent_yaml["emergency"]}"""
+              def agentLocation = 'AOF'
               def executeFrontendBuild = {
                 currentBuild.description = agentLocation + ' agent allocated'
                 echo agentLocation + ' agent is ready; starting the build.'
@@ -283,28 +213,8 @@ locals {
                 }
               }
 
-              def ciAgentAllocated = false
-              try {
-                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 900, yaml: ciAgentYaml) {
-                  node(POD_LABEL) {
-                    ciAgentAllocated = true
-                    executeFrontendBuild()
-                  }
-                }
-              } catch (Exception ciAllocationFailure) {
-                if (ciAgentAllocated) {
-                  throw ciAllocationFailure
-                }
-
-                agentLocation = 'compute fallback'
-                currentBuild.description = 'CI allocation failed; waiting for safe worker capacity'
-                echo 'No CI agent connected within 15 minutes. Trying a compute worker with a 1 CPU / 5 GiB scheduling reservation.'
-                podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 600, yaml: workerAgentYaml) {
-                  node(POD_LABEL) {
-                    executeFrontendBuild()
-                  }
-                }
-              }
+              ${local.agent_allocator}
+              runOnPreferredAgents(regularYaml, emergencyYaml, executeFrontendBuild, { true })
             }
           ''')
         }
@@ -315,19 +225,14 @@ locals {
 
   backend_tools_data = { for name in setunion(fileset("${path.module}/backend", "*.sh"), fileset("${path.module}/backend", "*.jq")) : name => file("${path.module}/backend/${name}") }
   backend_tools_name = "aof-back-ci-${substr(sha256(jsonencode(local.backend_tools_data)), 0, 12)}"
-  backend_agent_yaml = { for pool in ["ci", "compute"] : pool => yamlencode({
+  backend_agent_yaml = { for pool in ["regular", "emergency"] : pool => yamlencode({
     apiVersion = "v1"
     kind       = "Pod"
-    spec = merge({
-      nodeSelector = { workload = pool }
+    spec = merge(local.agent_scheduling[pool], {
       containers = [
         {
           name  = "jnlp"
           image = "jenkins/inbound-agent:latest-jdk21"
-          resources = {
-            requests = { cpu = "50m", memory = "128Mi" }
-            limits   = { cpu = pool == "ci" ? "500m" : "200m", memory = "512Mi" }
-          }
         },
         {
           name    = "kaniko"
@@ -339,10 +244,6 @@ locals {
             valueFrom = { secretKeyRef = { name = local.registry_secret_name, key = entry.key } }
           }]
           volumeMounts = [{ name = "kaniko-docker-config", mountPath = "/kaniko/.docker" }, { name = "ci-tools", mountPath = "/ci-scripts", readOnly = true }]
-          resources = {
-            requests = { cpu = "250m", memory = "3Gi", ephemeral-storage = "4Gi" }
-            limits   = { cpu = pool == "ci" ? "2" : "600m", memory = "4Gi", ephemeral-storage = "12Gi" }
-          }
         },
         {
           name         = "helm"
@@ -350,10 +251,6 @@ locals {
           command      = ["cat"]
           tty          = true
           volumeMounts = [{ name = "backend-chart", mountPath = "/charts/aof-back", readOnly = true }, { name = "ci-tools", mountPath = "/ci-scripts", readOnly = true }]
-          resources = {
-            requests = { cpu = "50m", memory = "128Mi" }
-            limits   = { cpu = pool == "ci" ? "500m" : "200m", memory = "512Mi" }
-          }
         }
       ]
       volumes = [
@@ -361,11 +258,7 @@ locals {
         { name = "ci-tools", configMap = { name = local.backend_tools_name } },
         { name = "backend-chart", configMap = { name = local.backend_chart_name, items = [for name in local.backend_chart_files : { key = replace(name, "/", "__"), path = name }] } }
       ]
-      }, pool == "ci" ? {
-      tolerations = [{ key = "dedicated", operator = "Equal", value = "ci", effect = "NoSchedule" }]
-      } : {}, pool == "compute" ? {
-      initContainers = [{ name = "worker-capacity-reservation", image = "busybox:1.36.1", command = ["/bin/true"], resources = { requests = { cpu = "1", memory = "5Gi" }, limits = { cpu = "1", memory = "5Gi" } } }]
-    } : {})
+    })
   }) }
 
   # Each polling job needs its own checkout history and fixed branch. Keep the
@@ -429,8 +322,9 @@ locals {
     tag_expression         = job.branch != "" ? "''" : "params.IMAGE_TAG?.trim()"
     branch_entries         = local.backend_git_branch_map_entries
     profile_entries        = local.backend_spring_profile_map_entries
-    ci_yaml                = local.backend_agent_yaml["ci"]
-    worker_yaml            = local.backend_agent_yaml["compute"]
+    regular_yaml           = local.backend_agent_yaml["regular"]
+    emergency_yaml         = local.backend_agent_yaml["emergency"]
+    agent_allocator        = local.agent_allocator
     image_repository       = var.backend_image_repository
     domain                 = var.app_domain_suffix
     legacy_domain          = var.legacy_app_domain_suffix
@@ -458,42 +352,14 @@ database_dump_job_script = <<-EOT
         cps {
           sandbox(true)
           script('''
-            currentBuild.description = 'Waiting for autoscaled CI capacity'
-            echo 'CI capacity requested. If no CI node is ready, this build will remain queued while Kubernetes starts one.'
+            currentBuild.description = 'Waiting for a regular AOF agent'
+            echo 'Requesting a database-job agent on any available AOF worker.'
 
-            podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 3600, yaml: """
-            apiVersion: v1
-            kind: Pod
-            spec:
-              nodeSelector:
-                workload: ci
-              tolerations:
-                - key: dedicated
-                  operator: Equal
-                  value: ci
-                  effect: NoSchedule
-              containers:
-                - name: jnlp
-                  image: jenkins/inbound-agent:latest-jdk21
-                - name: postgres
-                  image: postgres:11
-                  command:
-                    - cat
-                  tty: true
-                - name: kubectl
-                  image: dtzar/helm-kubectl:3.16.4
-                  command:
-                    - cat
-                  tty: true
-                - name: mc
-                  image: quay.io/minio/mc:latest
-                  command:
-                    - cat
-                  tty: true
-            """) {
-              node(POD_LABEL) {
-                currentBuild.description = 'CI agent allocated'
-                echo 'CI agent is ready; starting the build.'
+            def regularYaml = """${local.database_agent_yaml["regular"]["dump"]}"""
+            def emergencyYaml = """${local.database_agent_yaml["emergency"]["dump"]}"""
+            def executeDatabaseJob = {
+                currentBuild.description = 'AOF agent allocated'
+                echo 'AOF agent is ready; starting the job.'
                 def namespace = 'aof-' + params.INSTANCE
                 def clusterName = 'aof-' + params.INSTANCE + '-db'
                 def dumpPath = params.INSTANCE + '/manual'
@@ -534,8 +400,9 @@ database_dump_job_script = <<-EOT
                     }
                   }
                 }
-              }
             }
+            ${local.agent_allocator}
+            runOnPreferredAgents(regularYaml, emergencyYaml, executeDatabaseJob, { true })
           ''')
         }
       }
@@ -666,53 +533,15 @@ suffixes  = [".dump", ".sql", ".gz"]
           sandbox(true)
           script('''
             lock(resource: 'aof-stand-' + params.INSTANCE, reason: 'Database restore for ' + params.INSTANCE) {
-              currentBuild.description = 'Waiting up to 15 minutes for autoscaled CI capacity'
-              echo 'Database restores require a dedicated CI node and never fall back to application workers.'
+              currentBuild.description = 'Waiting for an available AOF agent'
+              echo 'Requesting a restore agent on any available AOF worker; the restore workspace remains on its PVC.'
 
-              podTemplate(serviceAccount: 'jenkins', slaveConnectTimeout: 900, workspaceVolume: dynamicPVC(accessModes: 'ReadWriteOnce', requestsSize: '64Gi', storageClassName: 'universal2.ru-7a'), yaml: """
-            apiVersion: v1
-            kind: Pod
-            spec:
-              securityContext:
-                fsGroup: 1000
-                fsGroupChangePolicy: OnRootMismatch
-              nodeSelector:
-                workload: ci
-              tolerations:
-                - key: dedicated
-                  operator: Equal
-                  value: ci
-                  effect: NoSchedule
-              containers:
-                - name: jnlp
-                  image: jenkins/inbound-agent:latest-jdk21
-                - name: postgres
-                  image: postgres:11
-                  command:
-                    - cat
-                  tty: true
-                  volumeMounts:
-                    - name: restore-script
-                      mountPath: /opt/aof-restore
-                      readOnly: true
-                - name: kubectl
-                  image: dtzar/helm-kubectl:3.16.4
-                  command:
-                    - cat
-                  tty: true
-                - name: mc
-                  image: quay.io/minio/mc:latest
-                  command:
-                    - cat
-                  tty: true
-              volumes:
-                - name: restore-script
-                  configMap:
-                    name: aof-db-restore-script
-            """) {
-              node(POD_LABEL) {
-                currentBuild.description = 'CI agent allocated'
-                echo 'CI agent is ready; starting the build.'
+              def regularYaml = """${local.database_agent_yaml["regular"]["restore"]}"""
+              def emergencyYaml = """${local.database_agent_yaml["emergency"]["restore"]}"""
+              def restoreSideEffectsStarted = false
+              def executeDatabaseJob = {
+                currentBuild.description = 'AOF agent allocated'
+                echo 'AOF agent is ready; starting the job.'
                 def namespace = 'aof-' + params.INSTANCE
                 def clusterName = 'aof-' + params.INSTANCE + '-db'
                 def backendReplicas = null
@@ -759,6 +588,7 @@ suffixes  = [".dump", ".sql", ".gz"]
 
                   if (params.RESET_SCHEMA) {
                     stage('Quiesce Backend') {
+                      restoreSideEffectsStarted = true
                       container('kubectl') {
                         withEnv(["NAMESPACE=" + namespace]) {
                           backendReplicas = sh(
@@ -777,6 +607,7 @@ suffixes  = [".dump", ".sql", ".gz"]
                   }
 
                   stage('Restore') {
+                    restoreSideEffectsStarted = true
                     container('postgres') {
                       withEnv([
                         "PGHOST=" + clusterName + "-rw." + namespace + ".svc.cluster.local",
@@ -812,7 +643,8 @@ suffixes  = [".dump", ".sql", ".gz"]
                   }
                 }
               }
-            }
+              ${local.agent_allocator}
+              runOnPreferredAgents(regularYaml, emergencyYaml, executeDatabaseJob, { !restoreSideEffectsStarted }, [workspaceVolume: dynamicPVC(accessModes: 'ReadWriteOnce', requestsSize: '64Gi', storageClassName: 'universal2.ru-7a')])
             }
           ''')
         }
@@ -922,6 +754,16 @@ resource "helm_release" "jenkins" {
     yamlencode({
       controller = {
         initScripts = {
+          "agent-resource-diagnostics" = <<-SCRIPT
+            // Pure decoding and read-only interruption causes for the owned agent policy.
+            [
+              'staticMethod org.codehaus.groovy.runtime.EncodingGroovyMethods decodeBase64 java.lang.String',
+              'method org.jenkinsci.plugins.workflow.steps.FlowInterruptedException getCauses'
+            ].each { signature ->
+              org.jenkinsci.plugins.scriptsecurity.scripts.ScriptApproval.get().approveSignature(signature)
+            }
+          SCRIPT
+
           "backend-console-filter" = <<-SCRIPT
             import jenkins.model.Jenkins
             def jenkins = Jenkins.get()

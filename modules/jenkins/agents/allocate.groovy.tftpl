@@ -1,0 +1,62 @@
+// Keep the autoscaled pool idle unless Kubernetes confirms resource exhaustion.
+def runOnPreferredAgents = { preferredYaml, reserveYaml, work, retrySafe, agentOptions = [:] ->
+  def failedPod = ''
+  def runOnAgent = { yaml, location, maxMinutes ->
+    def allocated = false
+    def finished = false
+    failedPod = ''
+    podTemplate((agentOptions ?: [:]) + [serviceAccount: 'jenkins', showRawYaml: false, podRetention: onFailure(), slaveConnectTimeout: maxMinutes * 60, yaml: yaml]) {
+      currentBuild.description = 'Waiting for ' + location + ' agent'
+      echo '[Agent] Requesting ' + location + ' agent.'
+      parallel(work: {
+        try {
+          node(POD_LABEL) {
+            allocated = true
+            failedPod = env.POD_NAME ?: env.NODE_NAME
+            currentBuild.description = location + ' agent ready'
+            work()
+          }
+        } finally { finished = true }
+      }, allocation: {
+        def seconds = 0
+        while (!allocated && !finished) {
+          sleep(time: 15, unit: 'SECONDS')
+          seconds += 15
+          if (!allocated && !finished && seconds >= maxMinutes * 60) {
+            error('[Agent] ' + location + ' allocation deadline exceeded')
+          }
+        }
+      }, failFast: true)
+    }
+  }
+  try {
+    runOnAgent(preferredYaml, 'regular AOF', 5)
+    return
+  } catch (Exception failure) {
+    // Agent loss also interrupts Pipeline. A user abort or timeout never retries.
+    if (failure instanceof org.jenkinsci.plugins.workflow.steps.FlowInterruptedException && failure.causes.any { cause ->
+      cause instanceof jenkins.model.CauseOfInterruption.UserInterruption ||
+      cause instanceof org.jenkinsci.plugins.workflow.steps.TimeoutStepExecution.ExceededTimeout
+    }) { throw failure }
+    if (!failedPod || !retrySafe()) { throw failure }
+    def confirmed = false
+    try {
+      timeout(time: 2, unit: 'MINUTES') {
+        podTemplate(serviceAccount: 'jenkins', showRawYaml: false, slaveConnectTimeout: 60, yaml: """${diagnostics_yaml}""") {
+          node(POD_LABEL) {
+            container('kubectl') {
+              withEnv(['FAILED_POD=' + failedPod]) {
+                confirmed = sh(returnStatus: true, script: new String('${diagnostics_script}'.decodeBase64(), 'UTF-8')) == 0
+              }
+            }
+          }
+        }
+      }
+    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException diagnosticInterruption) {
+      if (diagnosticInterruption.causes.any { it instanceof jenkins.model.CauseOfInterruption.UserInterruption }) { throw diagnosticInterruption }
+    } catch (Exception diagnosticFailure) { echo '[Agent] Resource diagnosis unavailable.' }
+    if (!confirmed) { throw failure }
+  }
+  echo '[Agent] Regular-node resource failure confirmed; requesting emergency CI capacity for one retry.'
+  runOnAgent(reserveYaml, 'emergency CI', 15)
+}
