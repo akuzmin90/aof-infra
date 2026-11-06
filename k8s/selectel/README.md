@@ -283,6 +283,34 @@ flowchart LR
   logical[Logical pg_dump files] --> manual[Manual restore / data transfer / debugging]
 ```
 
+## Content Manager
+
+`content-manager.tf` runs `aof-content-manager` (`https://content.zazer.fun`) in
+the `content-manager` namespace:
+
+- CloudNativePG cluster `content-manager-db` (PostgreSQL 16, database and owner
+  `content_manager`, `C.UTF-8` locale, `pg_trgm` created at init). Translations
+  exist only here, so both backups are on: physical backups + WAL archive in
+  `aof-postgres-backups/content-manager/physical-v2` (daily, 14 days) and a
+  nightly `pg_dump` in `aof-postgres-dumps/content-manager/automatic/`.
+- Deployment `aof-content-manager`: one replica, `Recreate`, PVC
+  `content-manager-workspace` (10 GiB) at `/data/workspace`, 1 GiB memory.
+- Secret `aof-content-manager` with `CM_ADMINS`, `CM_GIT_USERNAME`,
+  `CM_GIT_TOKEN` from `content_manager_*` variables (see
+  `terraform.tfvars.example`). The database password comes from the
+  `content-manager-db-app` secret. The git token needs read access only.
+- Ingress `content.zazer.fun` with `proxy-body-size: 300m` for ZIP uploads.
+
+Terraform ignores the container image: Jenkins job `aof-content-manager` builds
+`master` with Kaniko and sets the image by digest. Until its first run the pod
+waits for `aof-content-manager:latest` in `ImagePullBackOff`.
+
+```powershell
+kubectl -n content-manager get pods,pvc,ingress,certificate
+kubectl -n content-manager get cluster,backup,scheduledbackup
+kubectl -n content-manager logs deploy/aof-content-manager --tail=100
+```
+
 ## Public Sites
 
 Namespace:
@@ -420,6 +448,7 @@ Important public hosts:
 - `feature.k8s.zazer.fun`
 - `release.k8s.zazer.fun`
 - `grafana.k8s.zazer.fun`
+- `content.zazer.fun` (aof-content-manager)
 - Jenkins host from `var.jenkins_host`
 - `l.zazer.mobi`
 - `hitmakers.games`

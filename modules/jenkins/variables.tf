@@ -129,3 +129,27 @@ variable "registry_password" {
   sensitive   = true
   default     = ""
 }
+
+variable "content_manager_job_name" {
+  description = "Name of the Jenkins job that builds and deploys aof-content-manager."
+  type        = string
+  default     = "aof-content-manager"
+}
+
+variable "content_manager_image_repository" {
+  description = "Full image repository used by the aof-content-manager build job."
+  type        = string
+  default     = "cr.selcloud.ru/aof-registry/aof-content-manager"
+}
+
+variable "content_manager_namespace" {
+  description = "Namespace of the aof-content-manager Deployment managed by Terraform."
+  type        = string
+  default     = "content-manager"
+}
+
+variable "content_manager_deployment" {
+  description = "Name of the aof-content-manager Deployment; the job only sets its image."
+  type        = string
+  default     = "aof-content-manager"
+}

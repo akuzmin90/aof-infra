@@ -1,0 +1,92 @@
+def gitBranch = params.GIT_BRANCH?.trim() ?: 'master'
+if (!(gitBranch ==~ /^[A-Za-z0-9._\/-]+$/)) { error('Invalid GIT_BRANCH') }
+def regularYaml = '''${regular_yaml}'''
+def emergencyYaml = '''${emergency_yaml}'''
+def deploymentStarted = false
+def buildStart = System.currentTimeMillis()
+def executeBuild = {
+  def commit = ''
+  def imageTag = ''
+  def digest = ''
+  container('kubectl') {
+    sh(label: 'Prepare versioned CI tools', script: '''#!/bin/bash
+set -eu
+set +x
+mkdir -p "$WORKSPACE/ci-tools" "$WORKSPACE/ci-logs"
+cp -L /ci-scripts/* "$WORKSPACE/ci-tools/"
+''')
+  }
+  try {
+    stage('Checkout') {
+      timeout(time: 10, unit: 'MINUTES') {
+        dir('source') {
+          def result = checkout(changelog: true, poll: false, scm: [
+            $class: 'GitSCM', branches: [[name: '*/' + gitBranch]],
+            extensions: [[$class: 'CloneOption', depth: 1, honorRefspec: true, noTags: true, shallow: true, timeout: 8]],
+            userRemoteConfigs: [[url: '${git_url}', credentialsId: 'github-aof-token', refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch]]
+          ])
+          commit = result.GIT_COMMIT?.trim()
+        }
+      }
+      if (!commit) { error('Checkout did not return a commit; refusing deployment') }
+      imageTag = (gitBranch + '-' + env.BUILD_NUMBER + '-' + commit.take(12)).replaceAll('[^A-Za-z0-9_.-]', '-')
+      currentBuild.displayName = '#' + env.BUILD_NUMBER + ' ' + gitBranch + ' ' + commit.take(12)
+    }
+    stage('Build and Push Image') {
+      timeout(time: 45, unit: 'MINUTES') {
+        container('kaniko') {
+          withEnv(['IMAGE_REPOSITORY=${image_repository}', 'IMAGE_TAG=' + imageTag]) {
+            sh(label: 'Build and publish image', script: '#!/busybox/sh\nexec /busybox/sh "$WORKSPACE/ci-tools/build.sh"')
+          }
+        }
+      }
+      digest = readFile('ci-logs/image-digest.txt').trim()
+      if (!(digest ==~ /^sha256:[a-f0-9]{64}$/)) { error('Build did not produce a valid image digest') }
+    }
+    stage('Deploy') {
+      deploymentStarted = true
+      container('kubectl') {
+        withEnv([
+          'NAMESPACE=${namespace}', 'DEPLOYMENT=${deployment}',
+          'IMAGE=${image_repository}:' + imageTag + '@' + digest,
+          'CHANGE_CAUSE=' + env.JOB_NAME + ' #' + env.BUILD_NUMBER + ' ' + gitBranch + ' ' + commit.take(12)
+        ]) {
+          timeout(time: 15, unit: 'MINUTES') {
+            // Terraform owns the Deployment and ignores only its image; Recreate replaces the single pod.
+            sh(label: 'Set image and wait for rollout', script: '''#!/bin/bash
+set -Eeuo pipefail
+set +x
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+source "$WORKSPACE/ci-tools/cluster.sh"
+configure_cluster "$tmp"
+k() { kubectl --request-timeout=15s -n "$NAMESPACE" "$@"; }
+k set image "deployment/$DEPLOYMENT" "app=$IMAGE"
+k annotate "deployment/$DEPLOYMENT" "kubernetes.io/change-cause=$CHANGE_CAUSE" --overwrite
+if ! kubectl -n "$NAMESPACE" rollout status "deployment/$DEPLOYMENT" --timeout=12m; then
+  echo '[Deploy] Rollout failed; pods, events and logs follow.'
+  k get pods -l "app.kubernetes.io/name=$DEPLOYMENT" -o wide || true
+  k get events --sort-by=.lastTimestamp | tail -n 30 || true
+  k logs "deployment/$DEPLOYMENT" --tail=150 || true
+  exit 1
+fi
+echo "[Deploy] SUCCESS: $IMAGE"
+''')
+          }
+        }
+      }
+    }
+    currentBuild.description = 'deployed ' + commit.take(12)
+    echo '[Summary] SUCCESS: ' + gitBranch + ' @ ' + commit.take(12) + ', total ' + ((System.currentTimeMillis()-buildStart)/1000).toInteger() + 's'
+  } finally {
+    try {
+      timeout(time: 2, unit: 'MINUTES') {
+        archiveArtifacts(artifacts: 'ci-logs/**', allowEmptyArchive: true)
+      }
+    } catch (Exception archiveFailure) { echo '[Logs] Could not archive diagnostics: ' + archiveFailure.toString() }
+  }
+}
+lock(resource: '${deployment}', reason: 'aof-content-manager build/deployment') {
+  ${agent_allocator}
+  runOnPreferredAgents(regularYaml, emergencyYaml, executeBuild, { !deploymentStarted })
+}

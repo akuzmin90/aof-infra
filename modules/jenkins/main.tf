@@ -336,6 +336,71 @@ locals {
   EOT
 ]
 
+# Kaniko builds the image; the kubectl container only sets it on the
+# Terraform-managed Deployment (k8s/selectel/content-manager.tf).
+content_manager_agent_yaml = { for pool in ["regular", "emergency"] : pool => yamlencode({
+  apiVersion = "v1"
+  kind       = "Pod"
+  spec = merge(local.agent_scheduling[pool], {
+    containers = [
+      {
+        name  = "jnlp"
+        image = "jenkins/inbound-agent:latest-jdk21"
+      },
+      {
+        name    = "kaniko"
+        image   = "gcr.io/kaniko-project/executor:v1.23.2-debug"
+        command = ["cat"]
+        tty     = true
+        env = [for entry in [{ name = "REGISTRY_SERVER", key = "server" }, { name = "REGISTRY_USERNAME", key = "username" }, { name = "REGISTRY_PASSWORD", key = "password" }] : {
+          name      = entry.name
+          valueFrom = { secretKeyRef = { name = local.registry_secret_name, key = entry.key } }
+        }]
+        volumeMounts = [{ name = "kaniko-docker-config", mountPath = "/kaniko/.docker" }, { name = "ci-tools", mountPath = "/ci-scripts", readOnly = true }]
+      },
+      {
+        name         = "kubectl"
+        image        = "dtzar/helm-kubectl:3.16.4"
+        command      = ["cat"]
+        tty          = true
+        volumeMounts = [{ name = "ci-tools", mountPath = "/ci-scripts", readOnly = true }]
+      }
+    ]
+    volumes = [
+      { name = "kaniko-docker-config", emptyDir = {} },
+      { name = "ci-tools", configMap = { name = local.backend_tools_name } }
+    ]
+  })
+}) }
+
+content_manager_job_script = <<-EOT
+    pipelineJob('${var.content_manager_job_name}') {
+      description('Builds aof-content-manager (content.zazer.fun) from master, pushes the image, and sets it on the ${var.content_manager_namespace}/${var.content_manager_deployment} Deployment.')
+      keepDependencies(false)
+      logRotator { artifactDaysToKeep(14); artifactNumToKeep(20) }
+      properties {
+        disableConcurrentBuilds()
+      }
+      parameters {
+        stringParam('GIT_BRANCH', 'master', 'aof-content-manager branch. The service works in master only.')
+      }
+      definition {
+        cps {
+          sandbox(true)
+          script(new String('${base64encode(templatefile("${path.module}/content-manager/pipeline.groovy.tftpl", {
+regular_yaml     = local.content_manager_agent_yaml["regular"]
+emergency_yaml   = local.content_manager_agent_yaml["emergency"]
+agent_allocator  = local.agent_allocator
+git_url          = "https://github.com/akuzmin90/aof-content-manager.git"
+image_repository = var.content_manager_image_repository
+namespace        = var.content_manager_namespace
+deployment       = var.content_manager_deployment
+}))}'.decodeBase64(), 'UTF-8'))
+        }
+      }
+    }
+  EOT
+
 database_dump_job_script = <<-EOT
     pipelineJob('aof-db-dump') {
       description('Creates a manual PostgreSQL dump for the selected AOF instance and uploads it to S3.')
@@ -672,7 +737,7 @@ stale_job_names = [
 job_scripts = concat([
   local.database_dump_job_script,
   local.database_restore_job_script
-], local.frontend_job_scripts, local.backend_job_scripts, var.extra_job_scripts)
+], local.frontend_job_scripts, local.backend_job_scripts, [local.content_manager_job_script], var.extra_job_scripts)
 }
 
 resource "kubernetes_namespace" "jenkins" {

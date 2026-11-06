@@ -164,6 +164,36 @@ variable "aof_back_image_repository" {
   default     = "cr.selcloud.ru/aof-registry/aof-back"
 }
 
+variable "content_manager_host" {
+  description = "Public host of aof-content-manager."
+  type        = string
+  default     = "content.zazer.fun"
+}
+
+variable "content_manager_image_repository" {
+  description = "Container image repository for aof-content-manager."
+  type        = string
+  default     = "cr.selcloud.ru/aof-registry/aof-content-manager"
+}
+
+variable "content_manager_admins" {
+  description = "CM_ADMINS for aof-content-manager: login:bcrypt-hash, comma-separated. Hash: htpasswd -nbBC 10 \"\" 'password' | tr -d ':\\n'"
+  type        = string
+  sensitive   = true
+}
+
+variable "content_manager_git_username" {
+  description = "CM_GIT_USERNAME: GitHub login of the read-only technical account. Empty means x-access-token."
+  type        = string
+  default     = ""
+}
+
+variable "content_manager_git_token" {
+  description = "CM_GIT_TOKEN: classic PAT (scope repo) of the technical account with Read access to aof-back and aof-front. The service never pushes."
+  type        = string
+  sensitive   = true
+}
+
 variable "registry_server" {
   description = "Container registry server."
   type        = string

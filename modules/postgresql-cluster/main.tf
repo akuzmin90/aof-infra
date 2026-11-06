@@ -787,13 +787,18 @@ resource "helm_release" "cluster" {
         enablePDB             = var.enable_pdb
         affinity              = var.postgres_affinity
 
-        initdb = {
+        initdb = merge({
           database = local.app_database
           owner    = local.app_user
           secret = {
             name = kubernetes_secret.app.metadata[0].name
           }
-        }
+          }, var.initdb_locale != "" ? {
+          localeCollate = var.initdb_locale
+          localeCType   = var.initdb_locale
+          } : {}, length(var.post_init_application_sql) > 0 ? {
+          postInitApplicationSQL = var.post_init_application_sql
+        } : {})
 
         postgresql = {
           parameters = var.postgres_parameters
@@ -843,12 +848,12 @@ resource "helm_release" "cluster" {
         ]
       }
 
-      databases = [
+      databases = var.restore_database_enabled ? [
         {
           name  = "aof_dev_restore"
           owner = local.app_user
         }
-      ]
+      ] : []
 
       poolers = var.enable_pooler ? [
         {
