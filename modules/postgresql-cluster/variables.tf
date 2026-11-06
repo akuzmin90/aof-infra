@@ -268,3 +268,21 @@ variable "pooler_parameters" {
     default_pool_size = "25"
   }
 }
+
+variable "initdb_locale" {
+  description = "LC_COLLATE and LC_CTYPE for a new CloudNativePG cluster, for example C.UTF-8. Empty keeps the CloudNativePG default (C)."
+  type        = string
+  default     = ""
+}
+
+variable "post_init_application_sql" {
+  description = "SQL run as superuser in the application database right after a new CloudNativePG cluster is initialized."
+  type        = list(string)
+  default     = []
+}
+
+variable "restore_database_enabled" {
+  description = "Create the aof_dev_restore database used by the Jenkins restore jobs in a CloudNativePG cluster."
+  type        = bool
+  default     = true
+}

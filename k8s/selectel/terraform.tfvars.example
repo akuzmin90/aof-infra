@@ -36,6 +36,13 @@ registry_server   = "cr.selcloud.ru"
 registry_username = "replace-with-registry-username"
 registry_password = "replace-with-registry-token"
 
+# aof-content-manager (content.zazer.fun). Admins: login:bcrypt-hash, comma-separated;
+# hash: htpasswd -nbBC 10 "" 'password' | tr -d ':\n'
+# The git token needs read access only: the service never commits or pushes.
+content_manager_admins       = "admin:replace-with-bcrypt-hash"
+content_manager_git_username = "replace-with-technical-github-login"
+content_manager_git_token    = "replace-with-read-only-classic-pat"
+
 # Enable cert-manager TLS after DNS points at the ingress controller.
 # The current Terraform release intentionally renders ingress without tls: [].
 # Future per-instance Helm values should look like:

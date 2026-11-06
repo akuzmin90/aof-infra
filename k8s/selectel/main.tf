@@ -740,6 +740,10 @@ module "jenkins" {
   registry_server          = var.registry_server
   registry_username        = var.registry_username
   registry_password        = var.registry_password
+
+  content_manager_image_repository = var.content_manager_image_repository
+  content_manager_namespace        = local.content_manager.namespace
+  content_manager_deployment       = local.content_manager.name
 }
 
 resource "kubernetes_ingress_v1" "jenkins" {
