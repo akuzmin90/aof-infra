@@ -299,6 +299,10 @@ the `content-manager` namespace:
   `CM_GIT_TOKEN` from `content_manager_*` variables (see
   `terraform.tfvars.example`). The database password comes from the
   `content-manager-db-app` secret. The git token needs read access only.
+- `CM_ADMINS` is seeded from `content_manager_admins` once and then
+  maintained in the cluster: Terraform ignores later changes. To add an admin,
+  append `login:bcrypt-hash` to the Secret and restart the pod (the service
+  reads the list only at startup).
 - Ingress `content.zazer.fun` with `proxy-body-size: 300m` for ZIP uploads.
 
 Terraform ignores the container image: Jenkins job `aof-content-manager` builds
@@ -309,6 +313,12 @@ waits for `aof-content-manager:latest` in `ImagePullBackOff`.
 kubectl -n content-manager get pods,pvc,ingress,certificate
 kubectl -n content-manager get cluster,backup,scheduledbackup
 kubectl -n content-manager logs deploy/aof-content-manager --tail=100
+```
+
+Admin logins (no hashes):
+
+```bash
+kubectl -n content-manager exec deploy/aof-content-manager -- sh -c 'printf "%s" "$CM_ADMINS" | tr "," "\n" | cut -d: -f1'
 ```
 
 ## Public Sites

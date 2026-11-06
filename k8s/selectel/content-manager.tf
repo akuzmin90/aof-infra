@@ -129,6 +129,12 @@ resource "kubernetes_secret" "content_manager" {
     CM_GIT_USERNAME = var.content_manager_git_username
     CM_GIT_TOKEN    = var.content_manager_git_token
   }
+
+  lifecycle {
+    # The admin list is maintained in the cluster (kubectl patch + pod restart);
+    # content_manager_admins only seeds it when the Secret is created.
+    ignore_changes = [data["CM_ADMINS"]]
+  }
 }
 
 # Working copies of aof-back / aof-front (CM_WORKSPACE).
