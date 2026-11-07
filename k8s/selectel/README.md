@@ -299,6 +299,19 @@ the `content-manager` namespace:
   `CM_GIT_TOKEN` from `content_manager_*` variables (see
   `terraform.tfvars.example`). The database password comes from the
   `content-manager-db-app` secret. The git token needs read access only.
+- `CM_ADMINS`, `CM_OPENAI_KEY` and `CM_DEEPSEEK_KEY` live in the cluster:
+  Terraform only seeds them when the Secret is created (`ignore_changes`), so
+  `tofu apply` never overwrites them and the AI keys stay out of tfvars and
+  state. Set or rotate a key without git and without apply:
+
+  ```bash
+  read -rs "KEY?OpenAI key: " && kubectl -n content-manager patch secret aof-content-manager \
+    --type merge -p "{\"stringData\":{\"CM_OPENAI_KEY\":\"$KEY\"}}" && unset KEY
+  kubectl -n content-manager rollout restart deployment/aof-content-manager
+  ```
+
+  `CM_DEEPSEEK_KEY` is the fallback provider. Without both keys the AI
+  translation buttons in the content manager stay disabled.
 - `CM_ADMINS` is seeded from `content_manager_admins` once and then
   maintained in the cluster: Terraform ignores later changes. To add an admin,
   append `login:bcrypt-hash` to the Secret and restart the pod (the service
