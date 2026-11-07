@@ -177,9 +177,10 @@ variable "content_manager_image_repository" {
 }
 
 variable "content_manager_admins" {
-  description = "CM_ADMINS for aof-content-manager: login:bcrypt-hash, comma-separated. Hash: htpasswd -nbBC 10 \"\" 'password' | tr -d ':\\n'"
+  description = "Initial CM_ADMINS for aof-content-manager (login:bcrypt-hash, comma-separated), used only when the Secret is created; afterwards the list is maintained in the cluster. Hash: htpasswd -nbBC 10 \"\" 'password' | tr -d ':\\n'"
   type        = string
   sensitive   = true
+  default     = ""
 }
 
 variable "content_manager_git_username" {

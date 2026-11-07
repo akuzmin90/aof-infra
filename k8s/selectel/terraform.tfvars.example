@@ -36,7 +36,8 @@ registry_server   = "cr.selcloud.ru"
 registry_username = "replace-with-registry-username"
 registry_password = "replace-with-registry-token"
 
-# aof-content-manager (content.zazer.fun). Admins: login:bcrypt-hash, comma-separated;
+# aof-content-manager (content.zazer.fun). Initial admins (later maintained in the cluster):
+# login:bcrypt-hash, comma-separated;
 # hash: htpasswd -nbBC 10 "" 'password' | tr -d ':\n'
 # The git token needs read access only: the service never commits or pushes.
 content_manager_admins       = "admin:replace-with-bcrypt-hash"
