@@ -17,9 +17,9 @@ class ConfigurationTests(unittest.TestCase):
    source=(MODULE/'main.tf').read_text()
    (root/'main.tf').write_text(source[:source.index('resource "kubernetes_namespace"')])
    shutil.copy(MODULE/'variables.tf',root/'variables.tf')
-   for name in ['backend','charts','parameters','agents']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
+   for name in ['backend','charts','parameters','agents','content-manager']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
    for instances in [['dev','feature','release'],['feature']]:
-    r=subprocess.run(['tofu',f'-chdir={root}','console','-var=admin_password=test','-var=backend_job_name=aof-back','-var=frontend_instances='+json.dumps(instances)],input='jsonencode(local.backend_job_scripts)\n',text=True,capture_output=True,check=True)
+    r=subprocess.run(['tofu',f'-chdir={root}','console','-var=prefer_regular_agents=true','-var=admin_password=test','-var=backend_job_name=aof-back','-var=frontend_instances='+json.dumps(instances)],input='jsonencode(local.backend_job_scripts)\n',text=True,capture_output=True,check=True)
     scripts=json.loads(json.loads(r.stdout));self.assertEqual(len(scripts),1+len(instances))
     for script in scripts:
      name=re.search(r"pipelineJob\('([^']+)'",script)[1]
@@ -56,9 +56,9 @@ class ConfigurationTests(unittest.TestCase):
    source=(MODULE/'main.tf').read_text()
    (root/'main.tf').write_text(source[:source.index('resource "kubernetes_namespace"')])
    shutil.copy(MODULE/'variables.tf',root/'variables.tf')
-   for name in ['backend','charts','parameters','agents']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
+   for name in ['backend','charts','parameters','agents','content-manager']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
    for instances in [['dev','feature','release'],['feature']]:
-    r=subprocess.run(['tofu',f'-chdir={root}','console','-var=admin_password=test','-var=frontend_job_name=aof-front','-var=frontend_s3_endpoint_url=https://s3.example.invalid','-var=frontend_instances='+json.dumps(instances)],input='jsonencode(local.frontend_job_scripts)\n',text=True,capture_output=True,check=True)
+    r=subprocess.run(['tofu',f'-chdir={root}','console','-var=prefer_regular_agents=true','-var=admin_password=test','-var=frontend_job_name=aof-front','-var=frontend_s3_endpoint_url=https://s3.example.invalid','-var=frontend_instances='+json.dumps(instances)],input='jsonencode(local.frontend_job_scripts)\n',text=True,capture_output=True,check=True)
     scripts=json.loads(json.loads(r.stdout))
     self.assertEqual(len(scripts),1+len(instances))
     for script in scripts:
@@ -93,8 +93,8 @@ class ConfigurationTests(unittest.TestCase):
    source=(MODULE/'main.tf').read_text()
    (root/'main.tf').write_text(source[:source.index('resource "kubernetes_namespace"')])
    shutil.copy(MODULE/'variables.tf',root/'variables.tf')
-   for name in ['backend','charts','parameters','agents']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
-   r=subprocess.run(['tofu',f'-chdir={root}','console','-var=admin_password=test'],input='jsonencode(local.database_agent_yaml)\n',text=True,capture_output=True,check=True)
+   for name in ['backend','charts','parameters','agents','content-manager']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
+   r=subprocess.run(['tofu',f'-chdir={root}','console','-var=prefer_regular_agents=true','-var=admin_password=test'],input='jsonencode(local.database_agent_yaml)\n',text=True,capture_output=True,check=True)
    pools=json.loads(json.loads(r.stdout))
    import yaml
    for pool,modes in pools.items():
@@ -104,6 +104,26 @@ class ConfigurationTests(unittest.TestCase):
      if mode=='restore':
       self.assertEqual(spec['securityContext']['fsGroup'],1000)
       self.assertEqual(spec['volumes'][0]['configMap']['name'],'aof-db-restore-script')
+ def test_dedicated_ci_is_the_default(self):
+  with tempfile.TemporaryDirectory() as d:
+   root=Path(d)
+   source=(MODULE/'main.tf').read_text()
+   (root/'main.tf').write_text(source[:source.index('resource "kubernetes_namespace"')])
+   shutil.copy(MODULE/'variables.tf',root/'variables.tf')
+   for name in ['backend','charts','parameters','agents','content-manager']: (root/name).symlink_to(MODULE/name,target_is_directory=True)
+   r=subprocess.run(['tofu',f'-chdir={root}','console','-var=admin_password=test'],input='jsonencode({allocator = local.agent_allocator, job = local.content_manager_job_script})\n',text=True,capture_output=True,check=True)
+   rendered=json.loads(json.loads(r.stdout))
+   allocator=rendered['allocator']
+   self.assertIn('yaml: reserveYaml',allocator)
+   self.assertIn('slaveConnectTimeout: 3600',allocator)
+   self.assertNotIn('runOnAgent(preferredYaml',allocator)
+   self.assertNotIn('confirmed',allocator)
+   self.assertIn("pipelineJob('aof-content-manager')",rendered['job'])
+   self.assertNotIn('pollSCM',rendered['job'])
+   encoded=re.search(r"new String\('([A-Za-z0-9+/=]+)'\.decodeBase64",rendered['job'])[1]
+   pipeline=base64.b64decode(encoded).decode()
+   self.assertIn(allocator.strip(),pipeline)
+   self.assertIn("lock(resource: 'aof-content-manager'",pipeline)
  def check_agent(self,raw,pool):
   # Parse the rendered Pod, so admission-relevant placement and resources are tested.
   import yaml

@@ -10,6 +10,12 @@ variable "extra_job_scripts" {
   default     = []
 }
 
+variable "prefer_regular_agents" {
+  description = "Run builds on regular workers with CI fallback. Disabled keeps builds on dedicated CI workers."
+  type        = bool
+  default     = false
+}
+
 variable "persistence_storage_class" {
   description = "StorageClass for Jenkins home PVC. Empty uses the cluster default."
   type        = string

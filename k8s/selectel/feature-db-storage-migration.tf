@@ -37,7 +37,7 @@ resource "kubernetes_persistent_volume_claim_v1" "feature_db_universal2" {
 
     resources {
       requests = {
-        storage = "400Gi"
+        storage = "1Ti"
       }
     }
   }

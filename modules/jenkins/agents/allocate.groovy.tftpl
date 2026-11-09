@@ -1,3 +1,15 @@
+%{ if !prefer_regular_agents ~}
+// Preserve dedicated CI placement until shared-worker scheduling is enabled.
+def runOnPreferredAgents = { preferredYaml, reserveYaml, work, retrySafe, agentOptions = [:] ->
+  currentBuild.description = 'Waiting for dedicated CI capacity'
+  podTemplate((agentOptions ?: [:]) + [serviceAccount: 'jenkins', showRawYaml: false, slaveConnectTimeout: 3600, yaml: reserveYaml]) {
+    node(POD_LABEL) {
+      currentBuild.description = 'CI agent allocated'
+      work()
+    }
+  }
+}
+%{ else ~}
 // Keep the autoscaled pool idle unless Kubernetes confirms resource exhaustion.
 def runOnPreferredAgents = { preferredYaml, reserveYaml, work, retrySafe, agentOptions = [:] ->
   def failedPod = ''
@@ -60,3 +72,4 @@ def runOnPreferredAgents = { preferredYaml, reserveYaml, work, retrySafe, agentO
   echo '[Agent] Regular-node resource failure confirmed; requesting emergency CI capacity for one retry.'
   runOnAgent(reserveYaml, 'emergency CI', 15)
 }
+%{ endif ~}

@@ -24,6 +24,14 @@ spec:
           podSelector:
             matchLabels:
               app.kubernetes.io/part-of: aof-agent
+        {{- range .Values.additionalClients }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ required "additionalClients.namespace is required" .namespace | quote }}
+          podSelector:
+            matchLabels:
+              {{- required "additionalClients.podLabels is required" .podLabels | toYaml | nindent 14 }}
+        {{- end }}
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: vpn-check

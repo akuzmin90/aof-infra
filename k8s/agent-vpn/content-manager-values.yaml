@@ -1,0 +1,10 @@
+additionalClients:
+  - namespace: content-manager
+    podLabels:
+      app.kubernetes.io/name: aof-content-manager
+      app.kubernetes.io/instance: aof-content-manager
+proxyHosts:
+  - api.openai.com
+  - api.telegram.org
+  - api.ipify.org
+  - api.deepseek.com

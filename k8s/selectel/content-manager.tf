@@ -246,6 +246,17 @@ resource "kubernetes_deployment_v1" "content_manager" {
             value = "/data/workspace"
           }
 
+          # Java HttpClient uses JVM proxy settings. Keep the image's memory
+          # options in JAVA_TOOL_OPTIONS and native Git's direct route intact.
+          env {
+            name = "JDK_JAVA_OPTIONS"
+            value = join(" ", [
+              "-Dhttps.proxyHost=aof-agent-vpn.aof-agent-network.svc.cluster.local",
+              "-Dhttps.proxyPort=8888",
+              "-Dhttp.nonProxyHosts=localhost|127.*|[::1]|*.svc|*.cluster.local",
+            ])
+          }
+
           env_from {
             secret_ref {
               name = kubernetes_secret.content_manager.metadata[0].name
@@ -354,6 +365,7 @@ resource "kubernetes_ingress_v1" "content_manager" {
   metadata {
     name      = local.content_manager.name
     namespace = kubernetes_namespace.content_manager.metadata[0].name
+    labels    = local.content_manager_labels
 
     annotations = {
       "cert-manager.io/cluster-issuer" = module.cert_manager.cluster_issuer_name

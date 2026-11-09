@@ -56,6 +56,7 @@ locals {
     }
   }
   agent_allocator = templatefile("${path.module}/agents/allocate.groovy.tftpl", {
+    prefer_regular_agents = var.prefer_regular_agents
     diagnostics_yaml = yamlencode({
       apiVersion = "v1"
       kind       = "Pod"
@@ -776,6 +777,11 @@ resource "kubernetes_secret" "registry_push" {
 }
 
 resource "kubernetes_config_map" "backend_chart" {
+  lifecycle {
+    # Documentation changes do not alter the runtime Helm chart.
+    ignore_changes = [data["README.md"]]
+  }
+
   metadata {
     name      = local.backend_chart_name
     namespace = kubernetes_namespace.jenkins.metadata[0].name
@@ -818,7 +824,7 @@ resource "helm_release" "jenkins" {
   values = [
     yamlencode({
       controller = {
-        initScripts = {
+        initScripts = merge(var.prefer_regular_agents ? {
           "agent-resource-diagnostics" = <<-SCRIPT
             // Pure decoding and read-only interruption causes for the owned agent policy.
             [
@@ -828,7 +834,7 @@ resource "helm_release" "jenkins" {
               org.jenkinsci.plugins.scriptsecurity.scripts.ScriptApproval.get().approveSignature(signature)
             }
           SCRIPT
-
+        } : {}, {
           "backend-console-filter" = <<-SCRIPT
             import jenkins.model.Jenkins
             def jenkins = Jenkins.get()
@@ -900,7 +906,7 @@ resource "helm_release" "jenkins" {
               println("Skipped Jenkins admin password reset because security realm is not HudsonPrivateSecurityRealm")
             }
           SCRIPT
-        }
+        })
 
         # Preserve installed versions when adding restore dropdown dependencies.
         installLatestPlugins = false

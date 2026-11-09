@@ -36,6 +36,11 @@ resource "kubernetes_config_map" "proxy" {
 }
 
 resource "kubernetes_deployment" "frontend" {
+  lifecycle {
+    # A manual restart timestamp must not cause another rollout when removed.
+    ignore_changes = [spec[0].template[0].metadata[0].annotations["kubectl.kubernetes.io/restartedAt"]]
+  }
+
   metadata {
     name      = var.name
     namespace = var.namespace
