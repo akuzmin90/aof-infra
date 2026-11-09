@@ -1,0 +1,51 @@
+image:
+  repository: cr.selcloud.ru/aof-registry/aof-agent-vpn
+  # Set an immutable build tag or use a digest. No unversioned default is deployed.
+  tag: ""
+  digest: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+secretName: aof-agent-vpn-state
+failover:
+  enabled: false
+  subscriptionSecretName: aof-agent-vpn-config
+  reconnectAttempts: 2
+  countryCooldownSeconds: 300
+  # Include the Kubernetes Service IP and actual API endpoint IPs as /32 CIDRs.
+  apiCidrs: []
+clientNamespace: aof-agent
+proxyHosts:
+  - api.openai.com
+  - api.telegram.org
+  - api.ipify.org
+probeUrls:
+  - https://api.openai.com/v1/models
+  - https://api.telegram.org/
+# IPv4 resolver reached through the tunnel, not the cluster DNS service.
+dnsServers:
+  - 1.1.1.1
+  - 1.0.0.1
+resources:
+  vpn:
+    requests:
+      cpu: 100m
+      memory: 96Mi
+    limits:
+      cpu: "1"
+      memory: 256Mi
+  proxy:
+    requests:
+      cpu: 50m
+      memory: 32Mi
+    limits:
+      cpu: 500m
+      memory: 128Mi
+  failover:
+    requests:
+      cpu: 50m
+      memory: 48Mi
+    limits:
+      cpu: 250m
+      memory: 128Mi
+nodeSelector: {}
+tolerations: []

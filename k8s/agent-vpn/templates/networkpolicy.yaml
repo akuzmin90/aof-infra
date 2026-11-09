@@ -1,0 +1,46 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- if .Values.failover.enabled }}
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: vpn-failover
+      ports:
+        - port: 8889
+          protocol: TCP
+    {{- end }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.clientNamespace | quote }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: aof-agent
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: vpn-check
+      ports:
+        - port: 8888
+          protocol: TCP
+  egress:
+    # Only encrypted UDP transport may leave the pod over the cluster network.
+    # The pod firewall further restricts it to the active endpoint, port and mark.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+      ports:
+        - protocol: UDP
