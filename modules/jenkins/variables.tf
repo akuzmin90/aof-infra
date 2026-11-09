@@ -10,8 +10,8 @@ variable "extra_job_scripts" {
   default     = []
 }
 
-variable "prefer_regular_agents" {
-  description = "Run builds on regular workers with CI fallback. Disabled keeps builds on dedicated CI workers."
+variable "prefer_regular_build_agents" {
+  description = "Run frontend/backend builds on regular workers with CI fallback. Database and content-manager jobs stay on dedicated CI workers."
   type        = bool
   default     = false
 }

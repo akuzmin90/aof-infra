@@ -719,6 +719,9 @@ resource "kubernetes_ingress_v1" "frontend" {
 module "jenkins" {
   source = "../../modules/jenkins"
 
+  # Preserve the worker policy used by the existing successful build jobs.
+  prefer_regular_build_agents = true
+
   admin_password            = random_password.jenkins_admin.result
   persistence_storage_class = "fast.ru-7a"
   public_url                = "https://${var.jenkins_host}/"

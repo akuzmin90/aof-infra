@@ -55,8 +55,7 @@ locals {
       tolerations  = [{ key = "dedicated", operator = "Equal", value = "ci", effect = "NoSchedule" }]
     }
   }
-  agent_allocator = templatefile("${path.module}/agents/allocate.groovy.tftpl", {
-    prefer_regular_agents = var.prefer_regular_agents
+  agent_allocator_options = {
     diagnostics_yaml = yamlencode({
       apiVersion = "v1"
       kind       = "Pod"
@@ -68,7 +67,13 @@ locals {
       })
     })
     diagnostics_script = base64encode(file("${path.module}/agents/resource-failure.sh"))
-  })
+  }
+  agent_allocator = templatefile("${path.module}/agents/allocate.groovy.tftpl", merge(local.agent_allocator_options, {
+    prefer_regular_agents = false
+  }))
+  build_agent_allocator = templatefile("${path.module}/agents/allocate.groovy.tftpl", merge(local.agent_allocator_options, {
+    prefer_regular_agents = var.prefer_regular_build_agents
+  }))
   frontend_agent_yaml = { for pool in ["regular", "emergency"] : pool => yamlencode({
     apiVersion = "v1"
     kind       = "Pod"
@@ -214,7 +219,7 @@ locals {
                 }
               }
 
-              ${local.agent_allocator}
+              ${local.build_agent_allocator}
               runOnPreferredAgents(regularYaml, emergencyYaml, executeFrontendBuild, { true })
             }
           ''')
@@ -325,7 +330,7 @@ locals {
     profile_entries        = local.backend_spring_profile_map_entries
     regular_yaml           = local.backend_agent_yaml["regular"]
     emergency_yaml         = local.backend_agent_yaml["emergency"]
-    agent_allocator        = local.agent_allocator
+    agent_allocator        = local.build_agent_allocator
     image_repository       = var.backend_image_repository
     domain                 = var.app_domain_suffix
     legacy_domain          = var.legacy_app_domain_suffix
@@ -824,7 +829,7 @@ resource "helm_release" "jenkins" {
   values = [
     yamlencode({
       controller = {
-        initScripts = merge(var.prefer_regular_agents ? {
+        initScripts = merge(var.prefer_regular_build_agents ? {
           "agent-resource-diagnostics" = <<-SCRIPT
             // Pure decoding and read-only interruption causes for the owned agent policy.
             [
