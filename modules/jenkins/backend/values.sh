@@ -59,3 +59,10 @@ ingress:
 podAnnotations:
   ci.aof/build: "$BUILD_ID"
 EOF
+if [ -n "${BACKEND_JAVA_OPTIONS:-}" ]; then
+  cat <<EOF
+extraEnv:
+  - name: JDK_JAVA_OPTIONS
+    value: "$BACKEND_JAVA_OPTIONS"
+EOF
+fi

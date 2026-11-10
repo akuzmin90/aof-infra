@@ -4,6 +4,7 @@ def gitCredentialsId = ${credentials_expression}
 def imageTag = ${tag_expression}
 def branches = [${branch_entries}]
 def profiles = [${profile_entries}]
+def javaOptions = [${java_option_entries}]
 gitBranch = gitBranch ?: branches[instance]
 if (!profiles[instance] || !gitBranch) { error('Invalid backend stand or branch') }
 def deployTimeout = params.DEPLOY_TIMEOUT?.trim() ?: '15m'
@@ -75,6 +76,7 @@ cp -L /ci-scripts/* "$WORKSPACE/ci-tools/"
             'ADMIN_PVC=${admin_pvc}',
             'BACKEND_MEMORY_REQUEST=2Gi',
             'BACKEND_MEMORY_LIMIT=4Gi',
+            'BACKEND_JAVA_OPTIONS=' + (javaOptions[instance] ?: ''),
             'DEPLOY_TIMEOUT=' + deployTimeout, 'DEPLOY_SECONDS=' + deploySeconds,
             'STARTUP_FAILURE_THRESHOLD=' + Math.ceil((deploySeconds+900)/5.0d).toInteger(),
             'BUILD_ID=' + env.JOB_NAME.replaceAll('[^A-Za-z0-9_.-]', '-') + '-' + env.BUILD_NUMBER

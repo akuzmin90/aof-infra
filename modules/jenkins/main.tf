@@ -32,6 +32,11 @@ locals {
     feature = "tstFea"
     release = "tstRel"
   }
+  # Extra JVM launcher options per stand, passed as JDK_JAVA_OPTIONS so the
+  # image's JAVA_TOOL_OPTIONS stay intact.
+  backend_java_options = {
+    release = "-Xss64M"
+  }
   frontend_git_branch_map_entries = join(", ", [
     for instance, branch in local.frontend_default_git_branches : "'${instance}': '${branch}'"
   ])
@@ -40,6 +45,10 @@ locals {
   ])
   backend_spring_profile_map_entries = join(", ", [
     for instance, profile in local.backend_spring_profiles : "'${instance}': '${profile}'"
+  ])
+  # ":" keeps an empty Groovy map literal ([:]) rather than an empty list.
+  backend_java_option_map_entries = length(local.backend_java_options) == 0 ? ":" : join(", ", [
+    for instance, options in local.backend_java_options : "'${instance}': '${options}'"
   ])
 
   # Existing workers first; only a confirmed resource failure requests CI capacity.
@@ -328,6 +337,7 @@ locals {
     tag_expression         = job.branch != "" ? "''" : "params.IMAGE_TAG?.trim()"
     branch_entries         = local.backend_git_branch_map_entries
     profile_entries        = local.backend_spring_profile_map_entries
+    java_option_entries    = local.backend_java_option_map_entries
     regular_yaml           = local.backend_agent_yaml["regular"]
     emergency_yaml         = local.backend_agent_yaml["emergency"]
     agent_allocator        = local.build_agent_allocator
