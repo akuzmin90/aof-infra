@@ -928,6 +928,18 @@ resource "helm_release" "jenkins" {
 
         JCasC = {
           configScripts = {
+            # The LB uses externalTrafficPolicy=Cluster, so the client IP seen by Jenkins
+            # depends on the node that forwarded the connection. Bind crumbs to the session only.
+            "csrf" = yamlencode({
+              jenkins = {
+                crumbIssuer = {
+                  standard = {
+                    excludeClientIPFromCrumb = true
+                  }
+                }
+              }
+            })
+
             "aof-jobs" = yamlencode({
               jobs = [
                 for script in local.job_scripts : {
