@@ -128,12 +128,19 @@ resource "kubernetes_secret" "content_manager" {
     CM_ADMINS       = var.content_manager_admins
     CM_GIT_USERNAME = var.content_manager_git_username
     CM_GIT_TOKEN    = var.content_manager_git_token
+    CM_OPENAI_KEY   = var.content_manager_openai_key
+    CM_DEEPSEEK_KEY = var.content_manager_deepseek_key
   }
 
   lifecycle {
-    # The admin list is maintained in the cluster (kubectl patch + pod restart);
-    # content_manager_admins only seeds it when the Secret is created.
-    ignore_changes = [data["CM_ADMINS"]]
+    # The admin list and the AI keys are maintained in the cluster (kubectl patch +
+    # pod restart); the variables only seed them when the Secret is created, so the
+    # keys never have to be in tfvars or in the state.
+    ignore_changes = [
+      data["CM_ADMINS"],
+      data["CM_OPENAI_KEY"],
+      data["CM_DEEPSEEK_KEY"],
+    ]
   }
 }
 

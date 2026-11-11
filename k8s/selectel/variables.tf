@@ -195,6 +195,20 @@ variable "content_manager_git_token" {
   sensitive   = true
 }
 
+variable "content_manager_openai_key" {
+  description = "CM_OPENAI_KEY: OpenAI API key for AI translation. Seeds the Secret only; maintained in the cluster (kubectl patch). Empty disables OpenAI."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "content_manager_deepseek_key" {
+  description = "CM_DEEPSEEK_KEY: DeepSeek API key, the fallback provider for AI translation. Seeds the Secret only; maintained in the cluster (kubectl patch). Empty disables DeepSeek."
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "registry_server" {
   description = "Container registry server."
   type        = string
