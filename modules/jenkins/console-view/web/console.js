@@ -26,7 +26,7 @@
     document.head.append(style);
     consoleLog.classList.add('aof-compact');
     // An allowlist of routine notices: never hide a span containing an unknown line.
-    const routine = line => /^(Sleeping for \d|Timeout set to expire in |Running in \/|Running on |Agent .* is provisioned from template |Created Pod: kubernetes |Still waiting to schedule task$|[‘'].+[’'] is offline$|using credential |Cloning the remote Git repository$|Using shallow clone with depth |Avoid fetching tags$|Honoring refspec on initial clone$|Cloning repository https:\/\/github.com\/akuzmin90\/aof-back.git$|Fetching upstream changes from https:\/\/github.com\/akuzmin90\/aof-back.git$|Checking out Revision |Commit message: |Archiving artifacts$)/.test(line);
+    const routine = line => /^(Sleeping for \d|Timeout set to expire in |Running in \/|Running on |Agent .* is provisioned from template |Created Pod: kubernetes |Still waiting to schedule task$|[‘'].+[’'] is offline$|using credential |Cloning the remote Git repository$|Using shallow clone with depth |Avoid fetching tags$|Honoring refspec on initial clone$|Cloning repository https:\/\/github.com\/hitmakers-games\/aof-back.git$|Fetching upstream changes from https:\/\/github.com\/hitmakers-games\/aof-back.git$|Checking out Revision |Commit message: |Archiving artifacts$)/.test(line);
     const refresh = () => {
       consoleLog.querySelectorAll('span[class*="pipeline-node-"]').forEach(span => {
         const lines = span.textContent.split('\n').filter(line => line.trim());

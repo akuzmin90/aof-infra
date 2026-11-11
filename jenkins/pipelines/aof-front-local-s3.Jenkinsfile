@@ -7,7 +7,7 @@ properties([
   ])
 ])
 
-def frontRepo = 'https://github.com/akuzmin90/aof-front.git'
+def frontRepo = 'https://github.com/hitmakers-games/aof-front.git'
 
 podTemplate(yaml: """
 apiVersion: v1

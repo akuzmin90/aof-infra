@@ -13,7 +13,7 @@ properties([
   ])
 ])
 
-def backRepo = 'https://github.com/akuzmin90/aof-back.git'
+def backRepo = 'https://github.com/hitmakers-games/aof-back.git'
 
 podTemplate(serviceAccount: 'jenkins', yaml: """
 apiVersion: v1

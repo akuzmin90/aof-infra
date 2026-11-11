@@ -257,6 +257,16 @@ resource "kubernetes_deployment_v1" "content_manager" {
             ])
           }
 
+          env {
+            name  = "CM_REPO_BACK_URL"
+            value = "https://github.com/hitmakers-games/aof-back.git"
+          }
+
+          env {
+            name  = "CM_REPO_FRONT_URL"
+            value = "https://github.com/hitmakers-games/aof-front.git"
+          }
+
           env_from {
             secret_ref {
               name = kubernetes_secret.content_manager.metadata[0].name

@@ -35,7 +35,7 @@ cp -L /ci-scripts/* "$WORKSPACE/ci-tools/"
       def start = System.currentTimeMillis()
       timeout(time: 10, unit: 'MINUTES') {
         dir('source') {
-          def remote = [url: 'https://github.com/akuzmin90/aof-back.git', refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch]
+          def remote = [url: 'https://github.com/hitmakers-games/aof-back.git', refspec: '+refs/heads/' + gitBranch + ':refs/remotes/origin/' + gitBranch]
           if (gitCredentialsId) { remote.credentialsId = gitCredentialsId }
           // Preserve Jenkins SCM metadata for native Poll SCM. Do not replace with shell git.
           def result = checkout(changelog: true, poll: true, scm: [

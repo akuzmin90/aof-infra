@@ -169,7 +169,7 @@ locals {
           script('''
             def instance = ${job.instance != "" ? "'${job.instance}'" : "params.INSTANCE"}
             def gitCredentialsId = ${job.instance != "" ? "'github-aof-token'" : "params.GIT_CREDENTIALS_ID?.trim()"}
-            def frontRepo = 'https://github.com/akuzmin90/aof-front.git'
+            def frontRepo = 'https://github.com/hitmakers-games/aof-front.git'
             def frontendBuckets = [${local.frontend_bucket_map_entries}]
             def defaultGitBranches = [${local.frontend_git_branch_map_entries}]
 
@@ -407,7 +407,7 @@ content_manager_job_script = <<-EOT
 regular_yaml     = local.content_manager_agent_yaml["regular"]
 emergency_yaml   = local.content_manager_agent_yaml["emergency"]
 agent_allocator  = local.agent_allocator
-git_url          = "https://github.com/akuzmin90/aof-content-manager.git"
+git_url          = "https://github.com/hitmakers-games/aof-content-manager.git"
 image_repository = var.content_manager_image_repository
 namespace        = var.content_manager_namespace
 deployment       = var.content_manager_deployment
