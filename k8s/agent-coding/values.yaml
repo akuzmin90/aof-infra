@@ -1,6 +1,6 @@
 image:
   repository: cr.selcloud.ru/aof-registry/aof-agent-worker
-  digest: sha256:8b91ff5e9059e2865ed6378811c61d5313c2c31356825abf61200ba977f83e10
+  digest: sha256:eb644fa36c102e51e8cfc987a5d7925837020b6ee8651f3809703a1af0900752
 imagePullSecrets:
   - name: selectel-registry
 enabled: true
