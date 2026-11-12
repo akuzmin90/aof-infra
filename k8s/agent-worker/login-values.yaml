@@ -1,0 +1,14 @@
+authOnly: true
+image:
+  digest: sha256:ae2bdbd9d7a5a18527471d99652535129ab6ceb151956de40fe4bb216ccb7ab5
+imagePullSecrets:
+  - name: selectel-registry
+storage:
+  className: fast.ru-7
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 512Mi

@@ -1,0 +1,4 @@
+imagePullSecrets:
+  - name: selectel-registry
+storage:
+  className: fast.ru-7

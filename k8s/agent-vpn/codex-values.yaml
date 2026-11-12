@@ -1,0 +1,9 @@
+# Overlay on the existing release values, including content-manager clients.
+# Preserve all existing consumers when enabling ChatGPT subscription login.
+proxyHosts:
+  - api.openai.com
+  - api.telegram.org
+  - api.ipify.org
+  - api.deepseek.com
+  - chatgpt.com
+  - auth.openai.com
