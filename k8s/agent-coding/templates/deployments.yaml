@@ -18,7 +18,7 @@ spec:
       labels:
         app.kubernetes.io/instance: {{ $.Release.Name }}
         app.kubernetes.io/component: {{ $role }}
-        app.kubernetes.io/part-of: aof-agent-db-client
+        app.kubernetes.io/part-of: aof-agent
     spec:
       automountServiceAccountToken: false
       serviceAccountName: aof-agent-telegram-developer
