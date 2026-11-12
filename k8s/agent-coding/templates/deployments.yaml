@@ -65,7 +65,7 @@ spec:
               memory: 256Mi
             limits:
               cpu: "1500m"
-              memory: 3Gi
+              memory: 2Gi
           readinessProbe:
             exec:
               command: [python3, -c, "import os,time; raise SystemExit(time.time()-os.stat('/tmp/executor-ready').st_mtime > 180)"]
