@@ -1,0 +1,64 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ .Release.Name }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  imageName: {{ .Values.image | quote }}
+  instances: 1
+  enableSuperuserAccess: false
+  enablePDB: false
+  bootstrap:
+    initdb:
+      database: aof_agent
+      owner: aof_agent
+      encoding: UTF8
+      localeCollate: C.UTF-8
+      localeCType: C.UTF-8
+  affinity:
+    nodeSelector:
+      workload: database
+    tolerations:
+      - key: dedicated
+        operator: Equal
+        value: database
+        effect: NoSchedule
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  storage:
+    size: {{ .Values.storageSize }}
+    storageClass: {{ .Values.storageClass }}
+  postgresql:
+    parameters:
+      max_connections: "30"
+      shared_buffers: 128MB
+      work_mem: 4MB
+      maintenance_work_mem: 64MB
+      idle_in_transaction_session_timeout: 15s
+  {{- if .Values.backup.enabled }}
+  backup:
+    target: primary
+    retentionPolicy: {{ .Values.backup.retention }}
+    barmanObjectStore:
+      destinationPath: {{ .Values.backup.destination | quote }}
+      endpointURL: {{ .Values.backup.endpoint | quote }}
+      s3Credentials:
+        accessKeyId:
+          name: {{ .Values.backup.secretName }}
+          key: ACCESS_KEY_ID
+        secretAccessKey:
+          name: {{ .Values.backup.secretName }}
+          key: ACCESS_SECRET_KEY
+      data:
+        compression: gzip
+        jobs: 1
+      wal:
+        compression: gzip
+        maxParallel: 1
+  {{- end }}

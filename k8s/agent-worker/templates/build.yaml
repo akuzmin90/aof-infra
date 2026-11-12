@@ -1,0 +1,65 @@
+{{- if .Values.buildOnly }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: aof-agent
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: build
+          image: {{ .Values.build.image | quote }}
+          args:
+            - --context=dir:///context
+            - --dockerfile=/context/{{ .Values.build.dockerfile }}
+            - --destination={{ .Values.image.repository }}:{{ required "build.destinationTag is required" .Values.build.destinationTag }}
+            - --digest-file=/dev/termination-log
+            - --cache=false
+            - --push-retry=1
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID]
+          resources:
+            requests:
+              cpu: 500m
+              memory: 512Mi
+              ephemeral-storage: 1Gi
+            limits:
+              cpu: {{ default "2" .Values.build.cpuLimit | quote }}
+              memory: 2Gi
+              ephemeral-storage: 3Gi
+          volumeMounts:
+            - name: context
+              mountPath: /context
+              readOnly: true
+            - name: registry
+              mountPath: /kaniko/.docker
+              readOnly: true
+      volumes:
+        - name: context
+          configMap:
+            name: {{ required "build.contextConfigMap is required" .Values.build.contextConfigMap }}
+            items:
+              {{- toYaml .Values.build.contextItems | nindent 14 }}
+        - name: registry
+          secret:
+            secretName: {{ .Values.build.registrySecret }}
+            items:
+              - key: .dockerconfigjson
+                path: config.json
+{{- end }}

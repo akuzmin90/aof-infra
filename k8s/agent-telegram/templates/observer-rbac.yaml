@@ -1,0 +1,40 @@
+{{- if .Values.observer.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-observer
+automountServiceAccountToken: false
+{{- range $namespace := list "aof-dev" "aof-feature" "aof-release" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aof-agent-observer
+  namespace: {{ $namespace }}
+rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    resourceNames: [aof-back, frontend-gateway]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aof-agent-observer
+  namespace: {{ $namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aof-agent-observer
+subjects:
+  - kind: ServiceAccount
+    name: {{ $.Release.Name }}-observer
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}

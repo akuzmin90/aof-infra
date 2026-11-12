@@ -1,0 +1,70 @@
+image:
+  repository: cr.selcloud.ru/aof-registry/aof-agent-worker
+  digest: ""
+imagePullSecrets: []
+# First run a credential-free, network-isolated cluster compatibility check.
+preflightOnly: false
+buildOnly: false
+authOnly: false
+replicas: 1
+build:
+  image: ghcr.io/osscontainertools/kaniko@sha256:e7cba1f7e70c01c8ee1cbe622d07990c04dea550430c4c81319d26679226cd37
+  contextConfigMap: ""
+  destinationTag: ""
+  registrySecret: selectel-registry
+  dockerfile: worker/Dockerfile
+  contextItems:
+    - key: database__errors.py
+      path: database/errors.py
+    - key: database__postgres.py
+      path: database/postgres.py
+    - key: database__migrate.py
+      path: database/migrate.py
+    - key: database__schema.sql
+      path: database/schema.sql
+    - key: Dockerfile
+      path: worker/Dockerfile
+    - key: run.py
+      path: worker/run.py
+    - key: check_sandbox.py
+      path: worker/check_sandbox.py
+    - key: requirements.toml
+      path: worker/requirements.toml
+    - key: chat.py
+      path: worker/chat.py
+    - key: bot.py
+      path: telegram/bot.py
+    - key: api.py
+      path: telegram/api.py
+    - key: storage.py
+      path: telegram/storage.py
+    - key: commands.py
+      path: gateway/commands.py
+    - key: tasks.py
+      path: gateway/tasks.py
+    - key: redaction.py
+      path: gateway/redaction.py
+    - key: kubernetes.py
+      path: gateway/kubernetes.py
+    - key: diagnostics.py
+      path: gateway/diagnostics.py
+    - key: observer.py
+      path: gateway/observer.py
+# Created separately from the local workspace policy; never committed here.
+policyConfigMap: aof-agent-workspace-policy
+proxy:
+  namespace: aof-agent-network
+  release: aof-agent-vpn
+  url: http://aof-agent-vpn.aof-agent-network.svc.cluster.local:8888
+storage:
+  # Empty uses the cluster's default provisioner.
+  className: ""
+  state: 1Gi
+  workspace: 8Gi
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "2"
+    memory: 3Gi

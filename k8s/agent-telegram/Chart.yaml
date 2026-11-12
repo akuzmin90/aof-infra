@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aof-agent-telegram
+description: Private Telegram connection for the AOF agent
+type: application
+version: 0.1.0

@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: aof-agent
+  labels:
+    app.kubernetes.io/part-of: aof-agent
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: aof-agent
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: agent-budget
+  namespace: aof-agent
+spec:
+  hard:
+    pods: "4"
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "4"
+    limits.memory: 6Gi
+    # Includes 5 GiB for the database and 5 GiB for a temporary restore check.
+    requests.storage: 20Gi
+    persistentvolumeclaims: "5"

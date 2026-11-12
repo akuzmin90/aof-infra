@@ -1,0 +1,156 @@
+{{- range $role := list "controller" "executor" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $.Release.Name }}-{{ $role }}
+spec:
+  replicas: {{ ternary 1 0 $.Values.enabled }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+      app.kubernetes.io/component: {{ $role }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/component: {{ $role }}
+        app.kubernetes.io/part-of: {{ ternary "aof-agent-db-client" "aof-agent" (eq $role "controller") }}
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        {{- toYaml $.Values.imagePullSecrets | nindent 8 }}
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/instance: aof-agent-telegram
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: {{ ternary "Unconfined" "RuntimeDefault" (eq $role "executor") }}
+        {{- if eq $role "executor" }}
+        # Only the executor needs user/mount namespaces for Codex's inner sandbox.
+        appArmorProfile:
+          type: Unconfined
+        {{- end }}
+      containers:
+        - name: {{ $role }}
+          image: {{ printf "%s@%s" $.Values.image.repository (required "image.digest required" $.Values.image.digest) | quote }}
+          command: [python3, -m, coding.{{ $role }}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            {{- if eq $role "controller" }}
+            - name: AOF_DATABASE_DSN_FILE
+              value: /run/secrets/database/uri
+            - name: AOF_DATABASE_CA_FILE
+              value: /run/secrets/database/ca.crt
+            - name: PROXY_HOSTS
+              value: {{ $.Values.dependencyHosts | quote }}
+            {{- else }}
+            - name: AOF_SANDBOX_CHECK_ROOT
+              value: /workspace/tasks
+            - name: HTTPS_PROXY
+              value: {{ $.Values.proxyUrl | quote }}
+            - name: HTTP_PROXY
+              value: {{ $.Values.proxyUrl | quote }}
+            {{- end }}
+          resources:
+            requests:
+              cpu: {{ ternary "50m" "100m" (eq $role "controller") }}
+              memory: {{ ternary "64Mi" "256Mi" (eq $role "controller") }}
+            limits:
+              cpu: {{ ternary "200m" "1" (eq $role "controller") | quote }}
+              memory: {{ ternary "256Mi" "2Gi" (eq $role "controller") }}
+          readinessProbe:
+            exec:
+              {{- if eq $role "executor" }}
+              command: [python3, -c, "from pathlib import Path; raise SystemExit(not Path('/tmp/executor-ready').exists())"]
+              {{- else }}
+              command: [python3, -c, "import os,time; raise SystemExit(time.time()-os.stat('/tmp/{{ $role }}-ready').st_mtime > 180)"]
+              {{- end }}
+            initialDelaySeconds: 5
+            periodSeconds: 15
+          volumeMounts:
+            - name: workspace
+              mountPath: {{ ternary "/workspace" "/workspace/tasks" (eq $role "controller") }}
+              {{- if eq $role "executor" }}
+              subPath: tasks
+              {{- end }}
+            - name: executor-rpc
+              mountPath: /run/secrets/executor
+              readOnly: true
+            {{- if eq $role "controller" }}
+            - name: database
+              mountPath: /run/secrets/database
+              readOnly: true
+            - name: github
+              mountPath: /run/secrets/github
+              readOnly: true
+            {{- else }}
+            - name: state
+              mountPath: /state
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: {{ $.Values.workspaceClaim }}
+        - name: executor-rpc
+          secret:
+            secretName: {{ $.Values.executorSecret }}
+            defaultMode: 0440
+        {{- if eq $role "controller" }}
+        - name: github
+          secret:
+            secretName: {{ $.Values.githubSecret }}
+            defaultMode: 0440
+        - name: database
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ $.Values.database.appSecret }}
+                  items:
+                    - key: uri
+                      path: uri
+              - secret:
+                  name: {{ $.Values.database.caSecret }}
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- else }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ $.Values.stateClaim }}
+        {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 512Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $.Release.Name }}-{{ $role }}
+spec:
+  selector:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/component: {{ $role }}
+  ports:
+    - name: {{ ternary "dependencies" "executor" (eq $role "controller") }}
+      port: {{ ternary 8888 8080 (eq $role "controller") }}
+      targetPort: {{ ternary 8888 8080 (eq $role "controller") }}
+{{- end }}

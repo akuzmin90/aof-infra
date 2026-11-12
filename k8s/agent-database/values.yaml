@@ -1,0 +1,13 @@
+image: ghcr.io/cloudnative-pg/postgresql:16@sha256:34cd4159d07b3410a1b29da35072e2e927a0905e717a61afa3814624a2e8859a
+storageClass: fast.ru-7a
+storageSize: 5Gi
+# Uses the installed CNPG 1.27 integration. Move to the Barman Cloud Plugin
+# before upgrading the operator to 1.29, which removes this native integration.
+backup:
+  enabled: true
+  secretName: aof-agent-db-backup
+  destination: s3://aof-postgres-backups/aof-agent/physical-v1
+  endpoint: https://s3.ru-7.storage.selcloud.ru
+  endpointCidrs: [87.249.33.16/32]
+  retention: 14d
+  schedule: "0 30 2 * * *"

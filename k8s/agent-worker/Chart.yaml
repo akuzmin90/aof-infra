@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aof-agent-worker
+description: Private operator-controlled Codex worker
+type: application
+version: 0.1.0

@@ -1,0 +1,21 @@
+{{- if and (not .Values.preflightOnly) (not .Values.buildOnly) }}
+{{- range $name := list "state" "workspace" }}
+{{- if or (not $.Values.authOnly) (eq $name "state") }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $.Release.Name }}-{{ $name }}
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if $.Values.storage.className }}
+  storageClassName: {{ $.Values.storage.className | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ index $.Values.storage $name }}
+{{- end }}
+{{- end }}
+{{- end }}

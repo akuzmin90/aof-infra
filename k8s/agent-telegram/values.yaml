@@ -1,0 +1,32 @@
+image:
+  repository: cr.selcloud.ru/aof-registry/aof-agent-worker
+  digest: sha256:ae2bdbd9d7a5a18527471d99652535129ab6ceb151956de40fe4bb216ccb7ab5
+imagePullSecrets:
+  - name: selectel-registry
+secretName: aof-agent-telegram
+proxyUrl: http://aof-agent-vpn.aof-agent-network.svc.cluster.local:8888
+storageClassName: fast.ru-7
+storageSize: 1Gi
+engine:
+  enabled: true
+  repository: cr.selcloud.ru/aof-registry/aof-agent-worker
+  digest: sha256:ae2bdbd9d7a5a18527471d99652535129ab6ceb151956de40fe4bb216ccb7ab5
+  stateClaim: aof-agent-worker-state
+  workspaceClaim: aof-agent-workspace
+observer:
+  enabled: true
+  # Both service and endpoint addresses are needed across kube-proxy DNAT.
+  apiCidrs:
+    - 10.96.0.1/32
+    - 192.168.199.147/32
+coordinator:
+  enabled: true
+developer:
+  enabled: true
+  githubSecret: aof-agent-github
+  jiraSecret: aof-agent-jira
+database:
+  enabled: true
+  cluster: aof-agent-db
+  appSecret: aof-agent-db-app
+  caSecret: aof-agent-db-ca

@@ -1,0 +1,16 @@
+image:
+  repository: cr.selcloud.ru/aof-registry/aof-agent-worker
+  digest: sha256:ae2bdbd9d7a5a18527471d99652535129ab6ceb151956de40fe4bb216ccb7ab5
+imagePullSecrets:
+  - name: selectel-registry
+enabled: true
+workspaceClaim: aof-agent-workspace
+stateClaim: aof-agent-worker-state
+githubSecret: aof-agent-github
+executorSecret: aof-agent-coding-rpc
+database:
+  appSecret: aof-agent-db-app
+  caSecret: aof-agent-db-ca
+  cluster: aof-agent-db
+proxyUrl: http://aof-agent-vpn.aof-agent-network.svc.cluster.local:8888
+dependencyHosts: registry.npmjs.org,repo.maven.apache.org,pypi.org,files.pythonhosted.org,github.com,codeload.github.com,objects.githubusercontent.com,raw.githubusercontent.com

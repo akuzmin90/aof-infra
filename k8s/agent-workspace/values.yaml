@@ -1,0 +1,18 @@
+storage:
+  className: fast.ru-7
+  size: 8Gi
+bootstrap:
+  # Existing work is never reset. Run another explicit Job to add new clones.
+  jobName: aof-agent-repositories-bootstrap-01
+  sourceConfigMap: aof-agent-repositories-source-01
+  githubSecret: aof-agent-github
+  image: cr.selcloud.ru/aof-registry/aof-agent-worker@sha256:6e0caedd4f8f2696d56029f8b858bddb43b93c06ff47547c6d0e03ddcc80bb43
+imagePullSecrets:
+  - name: selectel-registry
+network:
+  # GitHub's published core IPv4 git/API ranges, checked against /meta.
+  githubCidrs:
+    - 192.30.252.0/22
+    - 185.199.108.0/22
+    - 140.82.112.0/20
+    - 143.55.64.0/20

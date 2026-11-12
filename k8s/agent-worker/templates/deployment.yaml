@@ -1,0 +1,103 @@
+{{- if and (not .Values.preflightOnly) (not .Values.buildOnly) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicas }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: aof-agent
+    spec:
+      automountServiceAccountToken: false
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: {{ printf "%s@%s" .Values.image.repository (required "image.digest is required" .Values.image.digest) | quote }}
+          imagePullPolicy: IfNotPresent
+          # Tasks and device login are started explicitly by an operator. No
+          # unauthenticated HTTP endpoint, webhook, or automatic job pickup.
+          command: ["/bin/sh", "-c"]
+          args:
+            {{- if .Values.authOnly }}
+            - umask 077; mkdir -p /state/auth; exec sleep infinity
+            {{- else }}
+            - python3 /opt/aof-agent/worker/check_sandbox.py && touch /tmp/sandbox-ready && exec sleep infinity
+            {{- end }}
+          readinessProbe:
+            exec:
+              {{- if .Values.authOnly }}
+              command: ["/bin/sh", "-c", "test -d /state/auth"]
+              {{- else }}
+              command: ["/bin/sh", "-c", "test -f /tmp/sandbox-ready"]
+              {{- end }}
+            initialDelaySeconds: 2
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: HTTPS_PROXY
+              value: {{ .Values.proxy.url | quote }}
+            - name: HTTP_PROXY
+              value: {{ .Values.proxy.url | quote }}
+            - name: NO_PROXY
+              value: localhost,127.0.0.1
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: state
+              mountPath: /state
+            - name: workspace
+              mountPath: /workspace
+            {{- if not .Values.authOnly }}
+            - name: policy
+              mountPath: /policy
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-state
+        - name: workspace
+          {{- if .Values.authOnly }}
+          emptyDir:
+            sizeLimit: 64Mi
+          {{- else }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-workspace
+          {{- end }}
+        {{- if not .Values.authOnly }}
+        - name: policy
+          configMap:
+            name: {{ required "policyConfigMap is required" .Values.policyConfigMap }}
+            items:
+              - key: AGENTS.md
+                path: AGENTS.md
+        {{- end }}
+        - name: tmp
+          emptyDir:
+            sizeLimit: 512Mi
+{{- end }}

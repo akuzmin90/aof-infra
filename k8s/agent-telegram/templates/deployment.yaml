@@ -1,0 +1,300 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/part-of: aof-agent
+    spec:
+      automountServiceAccountToken: false
+      {{- if .Values.developer.enabled }}
+      serviceAccountName: {{ .Release.Name }}-developer
+      {{- else if .Values.observer.enabled }}
+      serviceAccountName: {{ .Release.Name }}-observer
+      {{- else }}
+      serviceAccountName: default
+      {{- end }}
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: telegram
+          image: {{ printf "%s@%s" .Values.image.repository (required "image.digest is required" .Values.image.digest) | quote }}
+          command: ["python3", "/opt/aof-agent/telegram/bot.py", "serve"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          env:
+            - name: HTTPS_PROXY
+              value: {{ .Values.proxyUrl | quote }}
+            {{- if .Values.database.enabled }}
+            - name: AOF_DATABASE_DSN_FILE
+              value: /run/secrets/database/uri
+            - name: AOF_DATABASE_CA_FILE
+              value: /run/secrets/database/ca.crt
+            {{- end }}
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import os,time; raise SystemExit(time.time()-os.stat('/tmp/telegram-ready').st_mtime > 120)"
+            initialDelaySeconds: 2
+            periodSeconds: 15
+          volumeMounts:
+            - name: state
+              mountPath: /state
+            - name: credentials
+              mountPath: /run/secrets/telegram
+              readOnly: true
+            {{- if .Values.database.enabled }}
+            - name: database
+              mountPath: /run/secrets/database
+              readOnly: true
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+        {{- if .Values.engine.enabled }}
+        - name: engine
+          image: {{ printf "%s@%s" .Values.engine.repository (required "engine.digest is required" .Values.engine.digest) | quote }}
+          command: ["python3", "-m", "worker.chat"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            {{- if .Values.developer.enabled }}
+            seccompProfile:
+              type: Unconfined
+            appArmorProfile:
+              type: Unconfined
+            {{- end }}
+          env:
+            - name: HTTPS_PROXY
+              value: {{ .Values.proxyUrl | quote }}
+            {{- if .Values.database.enabled }}
+            - name: AOF_DATABASE_DSN_FILE
+              value: /run/secrets/database/uri
+            - name: AOF_DATABASE_CA_FILE
+              value: /run/secrets/database/ca.crt
+            {{- end }}
+            - name: HTTP_PROXY
+              value: {{ .Values.proxyUrl | quote }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi
+          readinessProbe:
+            exec:
+              command:
+                - python3
+                - -c
+                - "import os,time; raise SystemExit(time.time()-os.stat('/tmp/chat-ready').st_mtime > 180)"
+            initialDelaySeconds: 2
+            periodSeconds: 15
+          volumeMounts:
+            - name: engine-state
+              mountPath: /state
+            {{- if .Values.database.enabled }}
+            - name: database
+              mountPath: /run/secrets/database
+              readOnly: true
+            {{- end }}
+            - name: state
+              mountPath: /transport
+            - name: engine-tmp
+              mountPath: /tmp
+            - name: engine-workspace
+              mountPath: /workspace
+            {{- if .Values.developer.enabled }}
+            - name: developer-github
+              mountPath: /run/secrets/github
+              readOnly: true
+            - name: developer-jira
+              mountPath: /run/secrets/jira
+              readOnly: true
+            - name: observer-token
+              mountPath: /run/secrets/kubernetes
+              readOnly: true
+              {{- end }}
+        {{- end }}
+        {{- if .Values.observer.enabled }}
+        - name: observer
+          image: {{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}
+          command: ["python3", "-m", "gateway.observer"]
+          {{- if .Values.database.enabled }}
+          env:
+            - name: AOF_DATABASE_DSN_FILE
+              value: /run/secrets/database/uri
+            - name: AOF_DATABASE_CA_FILE
+              value: /run/secrets/database/ca.crt
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["python3", "-c", "import os,time; raise SystemExit(time.time()-os.stat('/tmp/observer-ready').st_mtime > 60)"]
+            initialDelaySeconds: 2
+            periodSeconds: 15
+          volumeMounts:
+            - name: state
+              mountPath: /transport
+            - name: observer-token
+              mountPath: /var/run/agent-kube
+              readOnly: true
+            {{- if .Values.database.enabled }}
+            - name: database
+              mountPath: /run/secrets/database
+              readOnly: true
+            {{- end }}
+            - name: observer-tmp
+              mountPath: /tmp
+        {{- end }}
+        {{- if .Values.coordinator.enabled }}
+        - name: coordinator
+          image: {{ printf "%s@%s" .Values.image.repository .Values.image.digest | quote }}
+          command: ["python3", "-m", "gateway.coordinator"]
+          env:
+            - name: AOF_DATABASE_DSN_FILE
+              value: /run/secrets/database/uri
+            - name: AOF_DATABASE_CA_FILE
+              value: /run/secrets/database/ca.crt
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          readinessProbe:
+            exec:
+              command: ["python3", "-c", "import os,time; raise SystemExit(time.time()-os.stat('/tmp/coordinator-ready').st_mtime > 60)"]
+            initialDelaySeconds: 2
+            periodSeconds: 15
+          volumeMounts:
+            - name: state
+              mountPath: /transport
+            - name: database
+              mountPath: /run/secrets/database
+              readOnly: true
+            - name: coordinator-tmp
+              mountPath: /tmp
+        {{- end }}
+      volumes:
+        {{- if .Values.developer.enabled }}
+        - name: developer-github
+          secret:
+            secretName: {{ .Values.developer.githubSecret }}
+            defaultMode: 0440
+        - name: developer-jira
+          secret:
+            secretName: {{ .Values.developer.jiraSecret }}
+            defaultMode: 0440
+        {{- end }}
+        {{- if .Values.coordinator.enabled }}
+        - name: coordinator-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        {{- end }}
+        {{- if .Values.database.enabled }}
+        - name: database
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: {{ .Values.database.appSecret }}
+                  items:
+                    - key: uri
+                      path: uri
+              - secret:
+                  name: {{ .Values.database.caSecret }}
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- end }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}
+        - name: credentials
+          secret:
+            secretName: {{ .Values.secretName }}
+            defaultMode: 0440
+        - name: tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        {{- if .Values.observer.enabled }}
+        - name: observer-tmp
+          emptyDir:
+            sizeLimit: 16Mi
+        - name: observer-token
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        {{- end }}
+        {{- if .Values.engine.enabled }}
+        - name: engine-state
+          persistentVolumeClaim:
+            claimName: {{ .Values.engine.stateClaim }}
+        - name: engine-tmp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: engine-workspace
+          {{- if .Values.engine.workspaceClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.engine.workspaceClaim }}
+          {{- else }}
+          emptyDir:
+            sizeLimit: 64Mi
+          {{- end }}
+        {{- end }}

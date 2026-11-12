@@ -1,0 +1,5 @@
+apiVersion: v2
+name: aof-agent-database
+description: Dedicated CloudNativePG database for agent state
+type: application
+version: 0.1.0
