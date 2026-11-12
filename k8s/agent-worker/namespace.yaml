@@ -23,11 +23,11 @@ metadata:
   namespace: aof-agent
 spec:
   hard:
-    pods: "4"
+    pods: "5"
     requests.cpu: "2"
     requests.memory: 4Gi
-    limits.cpu: "4"
-    limits.memory: 6Gi
+    limits.cpu: "5"
+    limits.memory: 7Gi
     # Includes 5 GiB for the database and 5 GiB for a temporary restore check.
     requests.storage: 20Gi
     persistentvolumeclaims: "5"

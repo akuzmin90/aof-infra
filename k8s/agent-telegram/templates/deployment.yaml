@@ -14,7 +14,15 @@ spec:
       labels:
         app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/part-of: aof-agent
+        aof-agent/workspace: "true"
     spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  aof-agent/workspace: "true"
+              topologyKey: kubernetes.io/hostname
       automountServiceAccountToken: false
       {{- if .Values.developer.enabled }}
       serviceAccountName: {{ .Release.Name }}-developer
@@ -215,6 +223,11 @@ spec:
             initialDelaySeconds: 2
             periodSeconds: 15
           volumeMounts:
+            - name: engine-workspace
+              mountPath: /workspace
+            - name: observer-token
+              mountPath: /run/secrets/kubernetes
+              readOnly: true
             - name: state
               mountPath: /transport
             - name: database
