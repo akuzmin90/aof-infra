@@ -5,7 +5,8 @@ kind: Deployment
 metadata:
   name: {{ $.Release.Name }}-{{ $role }}
 spec:
-  replicas: {{ ternary 1 0 $.Values.enabled }}
+  # The old controller stays scaled down during the transition. One worker owns the queue.
+  replicas: {{ ternary 1 0 (and $.Values.enabled (eq $role "executor")) }}
   strategy:
     type: Recreate
   selector:
@@ -17,9 +18,10 @@ spec:
       labels:
         app.kubernetes.io/instance: {{ $.Release.Name }}
         app.kubernetes.io/component: {{ $role }}
-        app.kubernetes.io/part-of: {{ ternary "aof-agent-db-client" "aof-agent" (eq $role "controller") }}
+        app.kubernetes.io/part-of: aof-agent-db-client
     spec:
       automountServiceAccountToken: false
+      serviceAccountName: aof-agent-telegram-developer
       imagePullSecrets:
         {{- toYaml $.Values.imagePullSecrets | nindent 8 }}
       affinity:
@@ -28,7 +30,7 @@ spec:
             - topologyKey: kubernetes.io/hostname
               labelSelector:
                 matchLabels:
-                  app.kubernetes.io/instance: aof-agent-telegram
+                  aof-agent/workspace: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 10001
@@ -36,87 +38,77 @@ spec:
         fsGroup: 10001
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
-          type: {{ ternary "Unconfined" "RuntimeDefault" (eq $role "executor") }}
-        {{- if eq $role "executor" }}
-        # Only the executor needs user/mount namespaces for Codex's inner sandbox.
+          type: Unconfined
         appArmorProfile:
           type: Unconfined
-        {{- end }}
       containers:
         - name: {{ $role }}
           image: {{ printf "%s@%s" $.Values.image.repository (required "image.digest required" $.Values.image.digest) | quote }}
-          command: [python3, -m, coding.{{ $role }}]
+          command: [python3, -m, worker.background]
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
           env:
-            {{- if eq $role "controller" }}
             - name: AOF_DATABASE_DSN_FILE
               value: /run/secrets/database/uri
             - name: AOF_DATABASE_CA_FILE
               value: /run/secrets/database/ca.crt
-            - name: PROXY_HOSTS
-              value: {{ $.Values.dependencyHosts | quote }}
-            {{- else }}
-            - name: AOF_SANDBOX_CHECK_ROOT
-              value: /workspace/tasks
             - name: HTTPS_PROXY
               value: {{ $.Values.proxyUrl | quote }}
             - name: HTTP_PROXY
               value: {{ $.Values.proxyUrl | quote }}
-            {{- end }}
           resources:
             requests:
-              cpu: {{ ternary "50m" "100m" (eq $role "controller") }}
-              memory: {{ ternary "64Mi" "256Mi" (eq $role "controller") }}
+              cpu: 100m
+              memory: 256Mi
             limits:
-              cpu: {{ ternary "200m" "1" (eq $role "controller") | quote }}
-              memory: {{ ternary "256Mi" "2Gi" (eq $role "controller") }}
+              cpu: "1500m"
+              memory: 3Gi
           readinessProbe:
             exec:
-              {{- if eq $role "executor" }}
-              command: [python3, -c, "from pathlib import Path; raise SystemExit(not Path('/tmp/executor-ready').exists())"]
-              {{- else }}
-              command: [python3, -c, "import os,time; raise SystemExit(time.time()-os.stat('/tmp/{{ $role }}-ready').st_mtime > 180)"]
-              {{- end }}
+              command: [python3, -c, "import os,time; raise SystemExit(time.time()-os.stat('/tmp/executor-ready').st_mtime > 180)"]
             initialDelaySeconds: 5
             periodSeconds: 15
           volumeMounts:
             - name: workspace
-              mountPath: {{ ternary "/workspace" "/workspace/tasks" (eq $role "controller") }}
-              {{- if eq $role "executor" }}
-              subPath: tasks
-              {{- end }}
-            - name: executor-rpc
-              mountPath: /run/secrets/executor
-              readOnly: true
-            {{- if eq $role "controller" }}
+              mountPath: /workspace
+            - name: state
+              mountPath: /state
+            - name: transport
+              mountPath: /transport
             - name: database
               mountPath: /run/secrets/database
               readOnly: true
             - name: github
               mountPath: /run/secrets/github
               readOnly: true
-            {{- else }}
-            - name: state
-              mountPath: /state
-            {{- end }}
+            - name: jira
+              mountPath: /run/secrets/jira
+              readOnly: true
+            - name: kubernetes
+              mountPath: /run/secrets/kubernetes
+              readOnly: true
             - name: tmp
               mountPath: /tmp
       volumes:
         - name: workspace
           persistentVolumeClaim:
             claimName: {{ $.Values.workspaceClaim }}
-        - name: executor-rpc
-          secret:
-            secretName: {{ $.Values.executorSecret }}
-            defaultMode: 0440
-        {{- if eq $role "controller" }}
+        - name: state
+          persistentVolumeClaim:
+            claimName: {{ $.Values.stateClaim }}
+        - name: transport
+          persistentVolumeClaim:
+            claimName: aof-agent-telegram
         - name: github
           secret:
             secretName: {{ $.Values.githubSecret }}
+            defaultMode: 0440
+        - name: jira
+          secret:
+            secretName: aof-agent-jira
             defaultMode: 0440
         - name: database
           projected:
@@ -132,25 +124,19 @@ spec:
                   items:
                     - key: ca.crt
                       path: ca.crt
-        {{- else }}
-        - name: state
-          persistentVolumeClaim:
-            claimName: {{ $.Values.stateClaim }}
-        {{- end }}
+        - name: kubernetes
+          projected:
+            defaultMode: 0440
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
         - name: tmp
           emptyDir:
             sizeLimit: 512Mi
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: {{ $.Release.Name }}-{{ $role }}
-spec:
-  selector:
-    app.kubernetes.io/instance: {{ $.Release.Name }}
-    app.kubernetes.io/component: {{ $role }}
-  ports:
-    - name: {{ ternary "dependencies" "executor" (eq $role "controller") }}
-      port: {{ ternary 8888 8080 (eq $role "controller") }}
-      targetPort: {{ ternary 8888 8080 (eq $role "controller") }}
 {{- end }}
